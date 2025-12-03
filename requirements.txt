@@ -1,0 +1,10 @@
+# PyVISA Oscilloscope Screenshot Tool - Dependencies
+
+# GUI Framework
+PyQt6>=6.5.0
+
+# VISA Communication
+pyvisa>=1.14.0
+
+# PyInstaller for building executables
+pyinstaller>=6.0.0

@@ -1,0 +1,389 @@
+/* 
+ * PyVISA Oscilloscope Screenshot Tool - Dark Theme Stylesheet
+ * Designed to match the React/shadcn-ui GUI
+ */
+
+/* ==================== Global Styles ==================== */
+QMainWindow, QWidget {
+    background-color: #0D1117;
+    color: #C9D1D9;
+    font-family: 'Segoe UI', 'Inter', -apple-system, sans-serif;
+    font-size: 13px;
+}
+
+/* ==================== Header ==================== */
+#appTitle {
+    font-size: 18px;
+    font-weight: 600;
+    color: #F0F6FC;
+    letter-spacing: -0.3px;
+}
+
+#appSubtitle {
+    font-size: 12px;
+    color: #8B949E;
+}
+
+#headerIconContainer {
+    background-color: rgba(56, 139, 253, 0.15);
+    border-radius: 10px;
+}
+
+#separator {
+    background-color: #21262D;
+}
+
+/* ==================== Panel Base ==================== */
+#panel {
+    background-color: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 12px;
+}
+
+#panelHeader {
+    background-color: transparent;
+    border-bottom: 1px solid #21262D;
+}
+
+#panelTitle {
+    font-weight: 500;
+    font-size: 13px;
+    color: #C9D1D9;
+}
+
+/* ==================== Device Panel ==================== */
+#deviceCount {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 11px;
+    color: #58A6FF;
+    margin-left: 8px;
+}
+
+#iconButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #8B949E;
+}
+
+#iconButton:hover {
+    background-color: #21262D;
+    color: #C9D1D9;
+}
+
+#iconButton:pressed {
+    background-color: #30363D;
+}
+
+#deviceScrollArea {
+    background-color: transparent;
+    border: none;
+}
+
+#deviceScrollArea QScrollArea {
+    background-color: transparent;
+}
+
+QScrollArea > QWidget > QWidget {
+    background-color: transparent;
+}
+
+/* ==================== Device Item ==================== */
+#deviceWidget {
+    background-color: #21262D;
+    border: 1px solid #30363D;
+    border-radius: 8px;
+}
+
+#deviceWidget:hover {
+    border-color: #58A6FF;
+    background-color: #262C36;
+}
+
+#deviceWidget[selected="true"] {
+    background-color: rgba(56, 139, 253, 0.1);
+    border-color: #58A6FF;
+}
+
+#statusIndicator {
+    border-radius: 4px;
+}
+
+#statusIndicator[connected="true"] {
+    background-color: #3FB950;
+    box-shadow: 0 0 6px rgba(63, 185, 80, 0.4);
+}
+
+#statusIndicator[connected="false"] {
+    background-color: #F85149;
+}
+
+#deviceName {
+    font-weight: 500;
+    font-size: 13px;
+    color: #C9D1D9;
+}
+
+#deviceDetails {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 11px;
+    color: #8B949E;
+}
+
+#emptyLabel {
+    color: #8B949E;
+    font-size: 13px;
+    padding: 24px;
+}
+
+/* ==================== Capture Button ==================== */
+#captureButton {
+    background-color: #238636;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    padding: 0 24px;
+}
+
+#captureButton:hover {
+    background-color: #2EA043;
+}
+
+#captureButton:pressed {
+    background-color: #238636;
+}
+
+#captureButton:disabled {
+    background-color: #21262D;
+    color: #484F58;
+}
+
+#captureStatus {
+    font-size: 11px;
+    color: #8B949E;
+    margin-top: 8px;
+}
+
+#captureStatusActive {
+    font-size: 11px;
+    color: #58A6FF;
+    font-weight: 500;
+    margin-top: 8px;
+}
+
+/* ==================== Settings Panel ==================== */
+#settingLabel {
+    font-weight: 500;
+    font-size: 13px;
+    color: #C9D1D9;
+}
+
+#toggleLabel {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 11px;
+    color: #C9D1D9;
+    font-weight: 500;
+}
+
+#toggleLabelInactive {
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 11px;
+    color: #484F58;
+}
+
+#settingInput {
+    background-color: #21262D;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 10px 12px;
+    color: #C9D1D9;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 13px;
+    selection-background-color: #58A6FF;
+}
+
+#settingInput:focus {
+    border-color: #58A6FF;
+    background-color: #0D1117;
+}
+
+#settingInput::placeholder {
+    color: #484F58;
+}
+
+#settingHint {
+    font-size: 11px;
+    color: #8B949E;
+}
+
+/* ==================== Terminal Panel ==================== */
+#terminal {
+    background-color: #0D1117;
+    border: none;
+    border-top: 1px solid #21262D;
+    border-bottom-left-radius: 12px;
+    border-bottom-right-radius: 12px;
+    padding: 12px 16px;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+/* ==================== Footer ==================== */
+#footer {
+    font-size: 11px;
+    color: #484F58;
+    padding-top: 16px;
+    border-top: 1px solid #21262D;
+}
+
+/* ==================== Scrollbar ==================== */
+QScrollBar:vertical {
+    background-color: transparent;
+    width: 8px;
+    margin: 4px 2px 4px 2px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #30363D;
+    border-radius: 4px;
+    min-height: 24px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #484F58;
+}
+
+QScrollBar::add-line:vertical, 
+QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: none;
+}
+
+QScrollBar::add-page:vertical, 
+QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+QScrollBar:horizontal {
+    background-color: transparent;
+    height: 8px;
+    margin: 2px 4px 2px 4px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #30363D;
+    border-radius: 4px;
+    min-width: 24px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #484F58;
+}
+
+QScrollBar::add-line:horizontal, 
+QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: none;
+}
+
+/* ==================== Checkbox ==================== */
+QCheckBox {
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid #30363D;
+    background-color: #21262D;
+}
+
+QCheckBox::indicator:hover {
+    border-color: #58A6FF;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #58A6FF;
+    border-color: #58A6FF;
+    image: url(check.svg);
+}
+
+QCheckBox::indicator:checked:hover {
+    background-color: #79C0FF;
+    border-color: #79C0FF;
+}
+
+/* ==================== Toggle Switch (styled checkbox) ==================== */
+#toggleSwitch::indicator {
+    width: 40px;
+    height: 22px;
+    border-radius: 11px;
+    border: none;
+    background-color: #30363D;
+}
+
+#toggleSwitch::indicator:checked {
+    background-color: #238636;
+}
+
+#toggleSwitch::indicator:hover {
+    background-color: #3D444D;
+}
+
+#toggleSwitch::indicator:checked:hover {
+    background-color: #2EA043;
+}
+
+/* ==================== Tooltips ==================== */
+QToolTip {
+    background-color: #1F2428;
+    color: #C9D1D9;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+/* ==================== Menu (if needed later) ==================== */
+QMenuBar {
+    background-color: #161B22;
+    border-bottom: 1px solid #21262D;
+    padding: 4px;
+}
+
+QMenuBar::item {
+    background-color: transparent;
+    padding: 6px 12px;
+    border-radius: 4px;
+}
+
+QMenuBar::item:selected {
+    background-color: #21262D;
+}
+
+QMenu {
+    background-color: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 8px 24px 8px 12px;
+    border-radius: 4px;
+}
+
+QMenu::item:selected {
+    background-color: #21262D;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #21262D;
+    margin: 4px 8px;
+}
