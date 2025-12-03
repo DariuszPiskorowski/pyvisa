@@ -38,4 +38,4 @@ Feel free to fork and contribute improvements or additional features.
 
 ## License
 
-This project is open-source. Please refer to the license file for details (if applicable).
+This project is open-source. 
