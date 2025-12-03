@@ -1,41 +1,45 @@
 # PyVISA Oscilloscope Interface
 
-This repository provides a Python implementation for communicating with oscilloscopes using the National Instruments (NI) VISA protocol. It leverages the PyVISA library to enable programmatic control and data acquisition from supported oscilloscope devices.
+This repository contains a Python script for controlling oscilloscopes via the VISA protocol using the PyVISA library. The main entry point is `oscilloscope_control.py`, which handles AutoScale toggling, manual time-base configuration, and screenshot capture.
 
 ## Features
 
-- Simple Python API for oscilloscope communication
-- Support for querying waveforms, settings, and measurements
-- Compatible with NI VISA-compliant instruments
+- Connect to the oscilloscope and configure communication parameters
+- Enable/disable AutoScale with configurable wait times
+- Set a manual time-base (seconds per division)
+- Capture oscilloscope screenshots via SCPI commands and save them locally
 
 ## Requirements
 
-- Python 3.x
+- Python 3.13 (or compatible)
 - PyVISA library (`pip install pyvisa`)
-- NI VISA runtime or compatible backend (e.g., PyVISA-py for open-source implementation)
+- NI VISA runtime or a compatible backend such as PyVISA-py
 
-## Usage
+## Quick Start
 
-```python
-import visa
-
-# Open a resource manager
-rm = visa.ResourceManager()
-
-# Connect to an oscilloscope (replace with your device's address)
-osc = rm.open_resource('TCPIP::192.168.1.100::INSTR')
-
-# Example: Query the device ID
-print(osc.query('*IDN?'))
-
-# Close the connection
-osc.close()
+```bash
+# Update configuration constants near the top of oscilloscope_control.py if needed
+python oscilloscope_control.py
 ```
+
+Key configuration constants in `oscilloscope_control.py`:
+
+- `AUTOSCALE_DEFAULT_ENABLED`: set to `True` to run AutoScale before each screenshot, or `False` to keep manual settings.
+- `AUTOSCALE_WAIT_SECONDS`: how long to wait after AutoScale completes.
+- `TIMEBASE_SECONDS_PER_DIVISION`: default time-base used when AutoScale is disabled.
+
+The script can also be imported and its helper functions (`set_autoscale_state`, `set_timebase_scale`, `capture_screenshot_display`) used directly inside other automation workflows.
+
+## Running from VS Code
+
+1. Open `oscilloscope_control.py`.
+2. Ensure your VISA resource name is correct in the `main()` function or pass it to your own calls.
+3. Press `F5` (Python File) or use the “Run Python File” button.
 
 ## Contributing
 
-Feel free to fork and contribute improvements or additional features.
+Pull requests with device-specific tweaks or additional tooling are welcome.
 
 ## License
 
-This project is open-source. 
+This project is open-source.
