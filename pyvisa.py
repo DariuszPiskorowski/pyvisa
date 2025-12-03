@@ -7,42 +7,42 @@ from pyvisa.resources import MessageBasedResource
 
 def open_scope(resource_name: str) -> MessageBasedResource:
     """
-    Otwiera połączenie z oscyloskopem i ustawia podstawowe parametry komunikacji.
-    Zwraca obiekt typu MessageBasedResource, co pomaga uniknąć warningów w PyCharm.
+    Opens a connection to the oscilloscope and configures basic communication parameters.
+    Returns a MessageBasedResource object to avoid warnings in PyCharm.
     """
     rm = pyvisa.ResourceManager()
     scope: MessageBasedResource = rm.open_resource(resource_name)
 
-    # Zwiększamy timeout i chunk_size, bo przy zrzutach ekranu może być dużo danych
+    # Increase timeout and chunk_size because screenshot transfers can be large
     scope.timeout = 20000
     scope.chunk_size = 102400
 
     scope.write_termination = '\n'
     scope.read_termination = '\n'
 
-    # Wyłączamy dodatkowe nagłówki SCPI, jeśli oscyloskop je wysyła
+    # Disable additional SCPI headers if the oscilloscope sends them
     scope.write(':SYSTem:HEADer OFF')
 
     return scope
 
 def autoscale_oscilloscope(resource_name: str, wait_time: float = 1.0) -> None:
     """
-    Otwiera połączenie z oscyloskopem i wykonuje komendę :AUToscale.
-    Następnie (opcjonalnie) czeka 'wait_time' sekund, aby oscylogram zdążył się wyświetlić.
+    Opens a connection to the oscilloscope and issues the :AUToscale command.
+    Then optionally waits 'wait_time' seconds so the waveform has time to settle.
     """
     scope = open_scope(resource_name)
     try:
         scope.write(':AUToscale')
-        # Możesz dostosować czas oczekiwania w zależności od potrzeb Twojego oscyloskopu
+        # Adjust the wait time depending on the needs of your oscilloscope
         time.sleep(wait_time)
     finally:
         scope.close()
 
 def read_binblock(scope: MessageBasedResource) -> bytes:
     """
-    Czyta binblock w formacie '#NLLLL...(dane)' w pętli,
-    aż pobierzemy całą wskazaną liczbę bajtów (LLLL).
-    Zwraca surowe bajty (bytes).
+    Reads a binblock formatted as '#NLLLL...(data)' in a loop
+    until the entire specified number of bytes (LLLL) is retrieved.
+    Returns raw bytes.
     """
     header = scope.read_bytes(2)
     if not header.startswith(b'#'):
@@ -68,24 +68,24 @@ def capture_screenshot_display(resource_name: str,
                                folder: str = r"C:\Users\35387\Pictures\Screenshots"
                                ) -> None:
     """
-    Otwiera połączenie z oscyloskopem, pobiera zrzut ekranu
-    poleceniem :DISPlay:DATA? PNG, COLOR w formie binblock i zapisuje plik PNG
-    z unikalną nazwą zawierającą timestamp.
+    Opens a connection to the oscilloscope, acquires a screenshot
+    using the :DISPlay:DATA? PNG, COLOR command in binblock form, and saves a PNG file
+    with a unique timestamped filename.
     """
     scope = open_scope(resource_name)
 
     try:
-        # Komenda do pobrania screenshotu w formacie PNG, w kolorze
+        # Command to retrieve the screenshot in PNG format, in color
         scope.write(':DISPlay:DATA? PNG, COLOR')
 
-        # Wczytujemy binblock
+        # Read the binblock
         image_data = read_binblock(scope)
 
-        # Budujemy unikalną nazwę pliku z datą i godziną
+        # Build a unique filename with date and time
         timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"scope_screenshot_{timestamp_str}.png"
 
-        # Upewniamy się, że folder docelowy istnieje
+        # Ensure the target folder exists
         os.makedirs(folder, exist_ok=True)
 
         full_path = os.path.join(folder, filename)
@@ -101,8 +101,8 @@ def capture_screenshot_display(resource_name: str,
 if __name__ == '__main__':
     resource_name = "USB0::0x0957::0x17A4::MY58250706::INSTR"
 
-    # 1. Najpierw auto-scale i czas zwloki
+    # 1. Run auto-scale first and wait
     autoscale_oscilloscope(resource_name, wait_time=3.0)
 
-    # 2. Następnie screenshot
+    # 2. Then capture the screenshot
     capture_screenshot_display(resource_name)
