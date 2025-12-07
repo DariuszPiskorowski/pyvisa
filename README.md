@@ -10,9 +10,25 @@ A Python application with GUI for capturing screenshots from multiple VISA instr
 
 - 🔌 **Auto-detect VISA devices** - Automatically scans for connected USB, GPIB, TCP/IP instruments
 - 📷 **Simultaneous capture** - Take screenshots from multiple oscilloscopes at once
+- 🏭 **Multi-vendor support** - Works with Keysight/Agilent and Siglent oscilloscopes
 - ⚙️ **Configurable settings** - AutoScale toggle and manual time-base control
 - 🖥️ **Modern dark UI** - Clean, professional interface
 - 📦 **Single .exe** - Builds to a standalone Windows executable
+
+## Supported Oscilloscopes
+
+| Vendor | Models | Tested |
+|--------|--------|--------|
+| **Keysight / Agilent** | InfiniiVision series (e.g., DSOX, MSOX) | ✅ |
+| **Siglent** | SDS1000X-E, SDS2000X-E, SDS800X-HD | ✅ SDS1104X-E |
+
+The tool auto-detects the oscilloscope vendor and uses the appropriate SCPI commands:
+
+| Feature | Keysight | Siglent |
+|---------|----------|---------|
+| AutoScale | `:AUToscale` | `ASET` |
+| Timebase | `:TIMebase:SCALe` | `TDIV` |
+| Screenshot | `:DISPlay:DATA? PNG` | `:SCDP` (BMP) |
 
 ## Requirements
 
@@ -86,6 +102,28 @@ Key constants in `oscilloscope_control.py`:
 | `AUTOSCALE_DEFAULT_ENABLED` | `False` | Run AutoScale before capture |
 | `AUTOSCALE_WAIT_SECONDS` | `3.0` | Wait time after AutoScale |
 | `TIMEBASE_SECONDS_PER_DIVISION` | `0.001` | Default time-base (1ms/div) |
+
+### Adding Support for New Oscilloscopes
+
+To add a new vendor, update `VENDOR_COMMANDS` dictionary in `oscilloscope_control.py`:
+
+```python
+VENDOR_COMMANDS = {
+    'keysight': {
+        'autoscale_enable': ':AUToscale',
+        'autoscale_disable': ':AUToscale:STATE OFF',
+        'timebase_scale': ':TIMebase:SCALe',
+    },
+    'siglent': {
+        'autoscale_enable': 'ASET',
+        'autoscale_disable': None,
+        'timebase_scale': 'TDIV',
+    },
+    # Add your vendor here...
+}
+```
+
+And add the USB vendor ID to `KNOWN_OSCILLOSCOPES` list.
 
 ## Building with GitHub Actions
 
