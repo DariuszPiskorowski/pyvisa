@@ -625,6 +625,14 @@ class MainWindow(QMainWindow):
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(footer)
 
+        # Credits with GitHub link
+        credits = QLabel('Created by Dariusz Piskorowski • <a href="https://github.com/DariuszPiskorowski/pyvisa.git" style="color: #484F58;">https://github.com/DariuszPiskorowski/pyvisa.git</a>')
+        credits.setObjectName("credits")
+        credits.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        credits.setOpenExternalLinks(True)  # Allow clicking the link to open in browser
+        credits.setStyleSheet("color: #484F58; font-size: 10px;")
+        main_layout.addWidget(credits)
+
         # Connect device toggle to update capture button
         for widget in self.device_panel.device_widgets:
             widget.toggled.connect(self._update_capture_button)

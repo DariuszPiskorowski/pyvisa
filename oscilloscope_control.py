@@ -10,7 +10,7 @@ from pyvisa.resources import MessageBasedResource
 # CONFIGURATION CONSTANTS FOR COMMONLY TUNED SETTINGS
 AUTOSCALE_DEFAULT_ENABLED = False  # SET TO FALSE TO KEEP MANUAL SETTINGS BEFORE SCREENSHOTS.
 AUTOSCALE_WAIT_SECONDS = 3.0  # HOW LONG TO WAIT AFTER AUTOSCALE. USED WHEN AUTOSCALE IS TRUE.
-TIMEBASE_SECONDS_PER_DIVISION = 0.001  # REQUIRED WHEN AUTOSCALE_DEFAULT_ENABLED IS FALSE (0.05 == 50MS PER DIVISION).
+TIMEBASE_SECONDS_PER_DIVISION = 0.0002  # REQUIRED WHEN AUTOSCALE_DEFAULT_ENABLED IS FALSE (0.05 == 50MS PER DIVISION).
 
 # VENDOR-SPECIFIC SCPI COMMANDS
 VENDOR_COMMANDS = {
@@ -19,12 +19,14 @@ VENDOR_COMMANDS = {
         'autoscale_disable': ':AUToscale:STATE OFF',  # Some models may not support this
         'timebase_scale': ':TIMebase:SCALe',
         'timebase_format': '{value}',  # Keysight accepts plain number
+        'autoscale_wait': 3.0,  # Keysight is faster
     },
     'siglent': {
         'autoscale_enable': 'ASET',  # Siglent uses ASET command
         'autoscale_disable': None,  # Siglent doesn't have a disable command - just don't call autoscale
         'timebase_scale': 'TDIV',  # Siglent uses TDIV command
         'timebase_format': '{value}',  # e.g., TDIV 5E-3
+        'autoscale_wait': 6.0,  # Siglent needs more time to render waveform after AutoScale
     },
 }
 
@@ -143,10 +145,11 @@ def read_binblock(scope: MessageBasedResource) -> bytes:
     return bytes(data)
 
 
-def _set_autoscale_state(scope: MessageBasedResource, enabled: bool, vendor: str = 'keysight', wait_time: float = 0.0) -> None:
+def _set_autoscale_state(scope: MessageBasedResource, enabled: bool, vendor: str = 'keysight', wait_time: Optional[float] = None) -> None:
     """
     Enables or disables AutoScale on the already opened oscilloscope handle.
     Uses vendor-specific commands from VENDOR_COMMANDS dictionary.
+    If wait_time is None, uses vendor-specific default wait time.
     """
     commands = VENDOR_COMMANDS.get(vendor, VENDOR_COMMANDS['keysight'])
     
@@ -165,9 +168,12 @@ def _set_autoscale_state(scope: MessageBasedResource, enabled: bool, vendor: str
         direction = 'enable' if enabled else 'disable'
         raise RuntimeError(f"Failed to {direction} AutoScale via '{command}'.") from error
 
-    if enabled and wait_time > 0:
-        # Allow the instrument to settle after executing AutoScale
-        time.sleep(wait_time)
+    if enabled:
+        # Use vendor-specific wait time if not provided
+        actual_wait = wait_time if wait_time is not None else commands.get('autoscale_wait', AUTOSCALE_WAIT_SECONDS)
+        if actual_wait > 0:
+            print(f"Waiting {actual_wait}s for {vendor} to settle...")
+            time.sleep(actual_wait)
 
 
 def set_autoscale_state(resource_name: str, enabled: bool, wait_time: float = AUTOSCALE_WAIT_SECONDS) -> None:
@@ -235,11 +241,11 @@ def capture_screenshot_display(resource_name: str,
 
     try:
         autoscale_setting = AUTOSCALE_DEFAULT_ENABLED if autoscale is None else autoscale
-        wait_setting = AUTOSCALE_WAIT_SECONDS if autoscale_wait is None else autoscale_wait
         vendor = get_oscilloscope_vendor(resource_name)
 
         if autoscale_setting:
-            _set_autoscale_state(scope, enabled=True, vendor=vendor, wait_time=wait_setting)
+            # Use provided wait time or vendor-specific default (None = use vendor default)
+            _set_autoscale_state(scope, enabled=True, vendor=vendor, wait_time=autoscale_wait)
             if timebase_scale is not None:
                 _set_timebase_scale(scope, seconds_per_division=timebase_scale, vendor=vendor)
         else:
