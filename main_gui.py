@@ -87,12 +87,12 @@ class CaptureThread(QThread):
     capture_failed = pyqtSignal(str, str)  # device_id, error
     all_completed = pyqtSignal()
 
-    def __init__(self, devices: List[Device], folder: str, autoscale: bool, 
+    def __init__(self, devices: List[Device], folder: str, mode: int, 
                  timebase: Optional[float] = None):
         super().__init__()
         self.devices = devices
         self.folder = folder
-        self.autoscale = autoscale
+        self.mode = mode  # 0=As Is, 1=AutoScale, 2=Custom
         self.timebase = timebase
 
     def run(self):
@@ -107,17 +107,43 @@ class CaptureThread(QThread):
                 filename = f"scope_{safe_name}_{timestamp_str}.png"
                 filepath = os.path.join(self.folder, filename)
                 
-                # Capture screenshot
-                capture_screenshot_display(
-                    resource_name=device.id,
-                    folder=self.folder,
-                    autoscale=self.autoscale,
-                    timebase_scale=self.timebase
-                )
+                # Capture screenshot based on mode
+                if self.mode == 0:
+                    # As It Is - capture without any changes
+                    self._capture_as_is(device.id, filepath)
+                elif self.mode == 1:
+                    # AutoScale mode
+                    capture_screenshot_display(
+                        resource_name=device.id,
+                        folder=self.folder,
+                        autoscale=True,
+                        timebase_scale=None
+                    )
+                else:
+                    # Custom Time Base mode
+                    capture_screenshot_display(
+                        resource_name=device.id,
+                        folder=self.folder,
+                        autoscale=False,
+                        timebase_scale=self.timebase
+                    )
                 self.capture_completed.emit(device.id, filepath)
             except Exception as e:
                 self.capture_failed.emit(device.id, str(e))
         self.all_completed.emit()
+
+    def _capture_as_is(self, resource_name: str, filepath: str):
+        """Capture screenshot without changing any oscilloscope settings."""
+        scope = open_scope(resource_name)
+        try:
+            # Just capture, no AutoScale, no TimeBase changes
+            scope.write(':DISPlay:DATA? PNG, COLOR')
+            image_data = read_binblock(scope)
+            
+            with open(filepath, 'wb') as f:
+                f.write(image_data)
+        finally:
+            scope.close()
 
 
 class DeviceWidget(QFrame):
@@ -375,30 +401,46 @@ class ControlPanel(QFrame):
         content_layout.setContentsMargins(16, 16, 16, 16)
         content_layout.setSpacing(16)
 
-        # AutoScale toggle
-        autoscale_row = QHBoxLayout()
-        autoscale_label = QLabel("AutoScale")
-        autoscale_label.setObjectName("settingLabel")
-        autoscale_row.addWidget(autoscale_label)
-        autoscale_row.addStretch()
+        # Capture Mode label
+        mode_label = QLabel("Capture Mode")
+        mode_label.setObjectName("settingLabel")
+        content_layout.addWidget(mode_label)
 
-        self.off_label = QLabel("OFF")
-        self.off_label.setObjectName("toggleLabel")
-        autoscale_row.addWidget(self.off_label)
+        # Three mode buttons in a row
+        buttons_layout = QHBoxLayout()
+        buttons_layout.setSpacing(8)
+        
+        self.mode_btn_asis = QPushButton("As It Is")
+        self.mode_btn_asis.setObjectName("modeButton")
+        self.mode_btn_asis.setProperty("active", True)
+        self.mode_btn_asis.setFixedHeight(36)
+        self.mode_btn_asis.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mode_btn_asis.clicked.connect(lambda: self._on_mode_changed(0))
+        buttons_layout.addWidget(self.mode_btn_asis)
+        
+        self.mode_btn_auto = QPushButton("AutoScale")
+        self.mode_btn_auto.setObjectName("modeButton")
+        self.mode_btn_auto.setProperty("active", False)
+        self.mode_btn_auto.setFixedHeight(36)
+        self.mode_btn_auto.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mode_btn_auto.clicked.connect(lambda: self._on_mode_changed(1))
+        buttons_layout.addWidget(self.mode_btn_auto)
+        
+        self.mode_btn_custom = QPushButton("Custom Time Base")
+        self.mode_btn_custom.setObjectName("modeButton")
+        self.mode_btn_custom.setProperty("active", False)
+        self.mode_btn_custom.setFixedHeight(36)
+        self.mode_btn_custom.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mode_btn_custom.clicked.connect(lambda: self._on_mode_changed(2))
+        buttons_layout.addWidget(self.mode_btn_custom)
+        
+        content_layout.addLayout(buttons_layout)
+        
+        self.current_mode = 0  # 0=As Is, 1=AutoScale, 2=Custom
 
-        self.autoscale_checkbox = QCheckBox()
-        self.autoscale_checkbox.setObjectName("toggleSwitch")
-        self.autoscale_checkbox.stateChanged.connect(self._on_autoscale_changed)
-        autoscale_row.addWidget(self.autoscale_checkbox)
-
-        self.on_label = QLabel("ON")
-        self.on_label.setObjectName("toggleLabelInactive")
-        autoscale_row.addWidget(self.on_label)
-
-        content_layout.addLayout(autoscale_row)
-
-        # TimeBase input
+        # TimeBase input (hidden by default)
         self.timebase_container = QWidget()
+        self.timebase_container.setVisible(False)  # Hidden by default
         timebase_layout = QVBoxLayout(self.timebase_container)
         timebase_layout.setContentsMargins(0, 0, 0, 0)
         timebase_layout.setSpacing(8)
@@ -421,19 +463,22 @@ class ControlPanel(QFrame):
         settings_layout.addWidget(settings_content)
         layout.addWidget(settings_panel)
 
-    def _on_autoscale_changed(self, state):
-        is_on = state == Qt.CheckState.Checked.value
-        self.timebase_container.setVisible(not is_on)
-        if is_on:
-            self.on_label.setObjectName("toggleLabel")
-            self.off_label.setObjectName("toggleLabelInactive")
-        else:
-            self.on_label.setObjectName("toggleLabelInactive")
-            self.off_label.setObjectName("toggleLabel")
-        self.on_label.style().unpolish(self.on_label)
-        self.on_label.style().polish(self.on_label)
-        self.off_label.style().unpolish(self.off_label)
-        self.off_label.style().polish(self.off_label)
+    def _on_mode_changed(self, mode: int):
+        """Handle mode change: 0=As Is, 1=AutoScale, 2=Custom"""
+        self.current_mode = mode
+        
+        # Update button states
+        self.mode_btn_asis.setProperty("active", mode == 0)
+        self.mode_btn_auto.setProperty("active", mode == 1)
+        self.mode_btn_custom.setProperty("active", mode == 2)
+        
+        # Refresh button styles
+        for btn in [self.mode_btn_asis, self.mode_btn_auto, self.mode_btn_custom]:
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        
+        # Show/hide timebase input - only visible for Custom mode
+        self.timebase_container.setVisible(mode == 2)
 
     def update_capture_button(self, enabled_count: int, is_capturing: bool):
         if is_capturing:
@@ -454,8 +499,13 @@ class ControlPanel(QFrame):
         self.capture_status.style().unpolish(self.capture_status)
         self.capture_status.style().polish(self.capture_status)
 
+    def get_mode(self) -> int:
+        """Returns current mode: 0=As Is, 1=AutoScale, 2=Custom"""
+        return self.current_mode
+
     def get_autoscale(self) -> bool:
-        return self.autoscale_checkbox.isChecked()
+        """Deprecated - use get_mode() instead"""
+        return self.current_mode == 1
 
     def get_timebase(self) -> Optional[float]:
         text = self.timebase_input.text().strip()
@@ -688,7 +738,7 @@ class MainWindow(QMainWindow):
             return
 
         # Get settings
-        autoscale = self.control_panel.get_autoscale()
+        mode = self.control_panel.get_mode()
         timebase = self.control_panel.get_timebase()
         
         # Default save folder
@@ -697,15 +747,17 @@ class MainWindow(QMainWindow):
 
         self.terminal_panel.add_log("info", f"Starting capture on {len(enabled_devices)} device(s)...")
         
-        if autoscale:
-            self.terminal_panel.add_log("info", "AutoScale enabled")
+        if mode == 0:
+            self.terminal_panel.add_log("info", "Mode: As It Is (no changes)")
+        elif mode == 1:
+            self.terminal_panel.add_log("info", "Mode: AutoScale enabled")
         else:
             tb = timebase if timebase else TIMEBASE_SECONDS_PER_DIVISION
-            self.terminal_panel.add_log("info", f"TimeBase: {tb} sec/div")
+            self.terminal_panel.add_log("info", f"Mode: Custom TimeBase ({tb} sec/div)")
 
         self._update_capture_button()
 
-        self.capture_thread = CaptureThread(enabled_devices, folder, autoscale, timebase)
+        self.capture_thread = CaptureThread(enabled_devices, folder, mode, timebase)
         self.capture_thread.capture_started.connect(self._on_capture_started)
         self.capture_thread.capture_completed.connect(self._on_capture_completed)
         self.capture_thread.capture_failed.connect(self._on_capture_failed)

@@ -139,7 +139,7 @@ QScrollArea > QWidget > QWidget {
 
 /* ==================== Capture Button ==================== */
 #captureButton {
-    background-color: #238636;
+    background-color: hsl(180, 76%, 26%);
     color: white;
     border: none;
     border-radius: 8px;
@@ -149,11 +149,11 @@ QScrollArea > QWidget > QWidget {
 }
 
 #captureButton:hover {
-    background-color: #2EA043;
+    background-color: hsl(180, 76%, 31%);
 }
 
 #captureButton:pressed {
-    background-color: #238636;
+    background-color: hsl(180, 76%, 23%);
 }
 
 #captureButton:disabled {
@@ -179,6 +179,33 @@ QScrollArea > QWidget > QWidget {
     font-weight: 500;
     font-size: 13px;
     color: #C9D1D9;
+}
+
+/* ==================== Mode Buttons (3-way selector) ==================== */
+#modeButton {
+    background-color: #21262D;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    color: #8B949E;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 8px 12px;
+}
+
+#modeButton:hover {
+    background-color: #262C36;
+    border-color: #484F58;
+}
+
+#modeButton[active="true"] {
+    background-color: hsl(180, 76%, 26%);
+    border-color: hsl(180, 76%, 26%);
+    color: #FFFFFF;
+}
+
+#modeButton[active="true"]:hover {
+    background-color: hsl(180, 76%, 31%);
+    border-color: hsl(180, 76%, 31%);
 }
 
 #toggleLabel {
