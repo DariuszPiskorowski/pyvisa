@@ -1,7 +1,7 @@
 import datetime
 import os
 import time
-from typing import Optional
+from typing import Dict, Optional
 
 import pyvisa
 from pyvisa.errors import VisaIOError
@@ -35,6 +35,61 @@ KNOWN_OSCILLOSCOPES = [
     '0x0957',   # Keysight / Agilent
     '0xF4EC',   # Siglent
 ]
+
+# DMM6500 MEASUREMENT FUNCTION OPTIONS
+DMM6500_MEASUREMENT_OPTIONS: Dict[str, str] = {
+    'DC Voltage (V)': 'VOLT:DC',
+    'AC Voltage (V)': 'VOLT:AC',
+    'DC Current (A)': 'CURR:DC',
+    'AC Current (A)': 'CURR:AC',
+    'Resistance 2W (Ohm)': 'RES',
+    'Resistance 4W (Ohm)': 'FRES',
+    'Frequency (Hz)': 'FREQ',
+}
+
+DMM6500_UNITS: Dict[str, str] = {
+    'VOLT:DC': 'V',
+    'VOLT:AC': 'V',
+    'CURR:DC': 'A',
+    'CURR:AC': 'A',
+    'RES': 'Ohm',
+    'FRES': 'Ohm',
+    'FREQ': 'Hz',
+}
+
+
+def detect_supported_instrument_type(resource_name: str, idn: str = '') -> str:
+    """
+    Classifies a VISA instrument as one of:
+    - 'oscilloscope'
+    - 'dmm6500'
+    - 'unknown'
+    """
+    token = f'{resource_name} {idn}'.lower()
+
+    if 'keithley' in token and 'dmm6500' in token:
+        return 'dmm6500'
+
+    if get_oscilloscope_vendor(resource_name) != 'unknown':
+        return 'oscilloscope'
+
+    if any(name in token for name in ('keysight', 'agilent', 'siglent', 'infiniivision', 'sds')):
+        return 'oscilloscope'
+
+    return 'unknown'
+
+
+def open_instrument(resource_name: str) -> MessageBasedResource:
+    """
+    Opens a generic VISA message-based instrument with sane defaults.
+    """
+    rm = pyvisa.ResourceManager()
+    instrument: MessageBasedResource = rm.open_resource(resource_name)
+    instrument.timeout = 20000
+    instrument.chunk_size = 102400
+    instrument.write_termination = '\n'
+    instrument.read_termination = '\n'
+    return instrument
 
 
 def detect_oscilloscope() -> Optional[str]:
@@ -88,15 +143,7 @@ def open_scope(resource_name: str) -> MessageBasedResource:
     Opens a connection to the oscilloscope and configures basic communication parameters.
     Returns a MessageBasedResource object to avoid warnings in PyCharm.
     """
-    rm = pyvisa.ResourceManager()
-    scope: MessageBasedResource = rm.open_resource(resource_name)
-
-    # Increase timeout and chunk_size because screenshot transfers can be large
-    scope.timeout = 20000
-    scope.chunk_size = 102400
-
-    scope.write_termination = '\n'
-    scope.read_termination = '\n'
+    scope = open_instrument(resource_name)
 
     # Disable additional SCPI headers if the oscilloscope sends them (Keysight only)
     vendor = get_oscilloscope_vendor(resource_name)
@@ -104,6 +151,70 @@ def open_scope(resource_name: str) -> MessageBasedResource:
         scope.write(':SYSTem:HEADer OFF')
 
     return scope
+
+
+def _validate_dmm6500_measurement_function(measurement_function: str) -> str:
+    normalized = measurement_function.strip().upper()
+    if normalized not in DMM6500_UNITS:
+        allowed = ', '.join(sorted(DMM6500_UNITS.keys()))
+        raise ValueError(f'Unsupported DMM6500 measurement function: {measurement_function}. Allowed: {allowed}.')
+    return normalized
+
+
+def configure_dmm6500_measurement(dmm: MessageBasedResource,
+                                  measurement_function: str = 'VOLT:DC',
+                                  measurement_range: Optional[float] = None) -> str:
+    """
+    Configures Keithley DMM6500 measurement function and range.
+    If measurement_range is None, Auto Range is enabled.
+    Returns normalized measurement function code.
+    """
+    normalized_function = _validate_dmm6500_measurement_function(measurement_function)
+
+    dmm.write(f':SENSe:FUNCtion "{normalized_function}"')
+
+    range_auto_cmd = f':SENSe:{normalized_function}:RANGe:AUTO'
+    range_set_cmd = f':SENSe:{normalized_function}:RANGe'
+
+    if measurement_range is None:
+        dmm.write(f'{range_auto_cmd} ON')
+    else:
+        if measurement_range <= 0:
+            raise ValueError('measurement_range must be greater than zero.')
+        dmm.write(f'{range_auto_cmd} OFF')
+        dmm.write(f'{range_set_cmd} {measurement_range}')
+
+    return normalized_function
+
+
+def measure_dmm6500(resource_name: str,
+                    measurement_function: str = 'VOLT:DC',
+                    measurement_range: Optional[float] = None) -> float:
+    """
+    Performs a single measurement with Keithley DMM6500 and returns a float value.
+    """
+    dmm = open_instrument(resource_name)
+    try:
+        configure_dmm6500_measurement(
+            dmm,
+            measurement_function=measurement_function,
+            measurement_range=measurement_range,
+        )
+        raw_value = dmm.query(':READ?').strip()
+        value_token = raw_value.split(',')[0].strip()
+        return float(value_token)
+    except VisaIOError as error:
+        raise RuntimeError(f'Failed to read DMM6500 measurement from {resource_name}.') from error
+    finally:
+        dmm.close()
+
+
+def get_dmm6500_unit(measurement_function: str) -> str:
+    """
+    Returns display unit for a DMM6500 measurement function.
+    """
+    normalized_function = _validate_dmm6500_measurement_function(measurement_function)
+    return DMM6500_UNITS.get(normalized_function, '')
 
 
 def autoscale_oscilloscope(resource_name: str, wait_time: float = AUTOSCALE_WAIT_SECONDS) -> None:
@@ -229,13 +340,13 @@ def capture_screenshot_display(resource_name: str,
                                autoscale: Optional[bool] = None,
                                autoscale_wait: Optional[float] = None,
                                timebase_scale: Optional[float] = None
-                               ) -> None:
+                               ) -> str:
     """
     Opens a connection to the oscilloscope, acquires a screenshot
-    using the :DISPlay:DATA? PNG, COLOR command in binblock form, and saves a PNG file
+    using the :DISPlay:DATA? PNG, COLOR command in binblock form, and saves an image file
     with a unique timestamped filename. AutoScale and timebase behaviour default
     to the configuration constants defined at the top of this module unless the
-    optional parameters override them.
+    optional parameters override them. Returns the saved file path.
     """
     scope = open_scope(resource_name)
 
@@ -285,6 +396,7 @@ def capture_screenshot_display(resource_name: str,
             f.write(image_data)
 
         print(f"Screenshot zapisany do: {full_path}")
+        return full_path
 
     finally:
         scope.close()

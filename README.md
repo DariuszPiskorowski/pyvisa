@@ -9,26 +9,40 @@ A Python application with GUI for capturing screenshots from multiple VISA instr
 ## Features
 
 - 🔌 **Auto-detect VISA devices** - Automatically scans for connected USB, GPIB, TCP/IP instruments
-- 📷 **Simultaneous capture** - Take screenshots from multiple oscilloscopes at once
-- 🏭 **Multi-vendor support** - Works with Keysight/Agilent and Siglent oscilloscopes
-- ⚙️ **Configurable settings** - AutoScale toggle and manual time-base control
+- 📷 **Simultaneous capture** - Trigger multiple instruments from one action
+- 🏭 **Multi-vendor support** - Works with Keysight/Agilent, Siglent, and Keithley instruments
+- ⚙️ **Configurable settings** - Oscilloscope capture mode/time-base and DMM6500 measurement type/range
 - 🖥️ **Modern dark UI** - Clean, professional interface
 - 📦 **Single .exe** - Builds to a standalone Windows executable
 
-## Supported Oscilloscopes
+## Supported Instruments
+
+### Oscilloscopes
 
 | Vendor | Models | Tested |
 |--------|--------|--------|
 | **Keysight / Agilent** | InfiniiVision series (e.g., DSOX, MSOX) | ✅ |
 | **Siglent** | SDS1000X-E, SDS2000X-E, SDS800X-HD | ✅ SDS1104X-E |
 
-The tool auto-detects the oscilloscope vendor and uses the appropriate SCPI commands:
+### Multimeters
+
+| Vendor | Models | Tested |
+|--------|--------|--------|
+| **Keithley** | DMM6500 | ✅ |
+
+The tool auto-detects instrument type and uses the appropriate SCPI commands:
 
 | Feature | Keysight | Siglent |
 |---------|----------|---------|
 | AutoScale | `:AUToscale` | `ASET` |
 | Timebase | `:TIMebase:SCALe` | `TDIV` |
 | Screenshot | `:DISPlay:DATA? PNG` | `:SCDP` (BMP) |
+
+Keithley DMM6500 support includes:
+
+- Measurement function selection (`VOLT:DC`, `VOLT:AC`, `CURR:DC`, `CURR:AC`, `RES`, `FRES`, `FREQ`)
+- Measurement range configuration (numeric manual range or Auto range)
+- Single reading via `:READ?`, saved to timestamped `.txt` files
 
 ## Requirements
 
@@ -72,14 +86,19 @@ pyinstaller oscilloscope_tool.spec --clean
 1. Launch `main_gui.py` or the `.exe` file
 2. Click the refresh button to scan for VISA devices
 3. Check the devices you want to capture from
-4. Configure AutoScale (ON/OFF) and TimeBase if needed
-5. Click **"Take a Shot"** to capture screenshots
+4. Configure settings:
+    - Oscilloscope: Capture mode (As Is / AutoScale / Custom TimeBase)
+    - Keithley DMM6500: Measurement type and range (Auto or manual)
+5. Click **"Take a Shot"** to trigger selected instruments
 
-Screenshots are saved to `~/Pictures/Oscilloscope/` with timestamped filenames.
+Outputs are saved to `~/Pictures/Oscilloscope/` with timestamped filenames:
+
+- Oscilloscope screenshot files (`.png` / `.bmp`)
+- DMM6500 measurement result files (`.txt`)
 
 ### Command Line (oscilloscope_control.py)
 ```python
-from oscilloscope_control import capture_screenshot_display
+from oscilloscope_control import capture_screenshot_display, measure_dmm6500
 
 # Basic capture
 capture_screenshot_display("USB0::0x0957::0x17A4::MY58250706::INSTR")
@@ -91,6 +110,14 @@ capture_screenshot_display(
     autoscale=False,
     timebase_scale=0.001  # 1ms/div
 )
+
+# DMM6500 single measurement
+value = measure_dmm6500(
+    resource_name="USB0::...",
+    measurement_function="VOLT:DC",
+    measurement_range=None  # Auto range
+)
+print(value)
 ```
 
 ## Configuration
@@ -101,7 +128,7 @@ Key constants in `oscilloscope_control.py`:
 |----------|---------|-------------|
 | `AUTOSCALE_DEFAULT_ENABLED` | `False` | Run AutoScale before capture |
 | `AUTOSCALE_WAIT_SECONDS` | `3.0` | Wait time after AutoScale |
-| `TIMEBASE_SECONDS_PER_DIVISION` | `0.001` | Default time-base (1ms/div) |
+| `TIMEBASE_SECONDS_PER_DIVISION` | `0.0002` | Default time-base (0.2ms/div) |
 
 ### Adding Support for New Oscilloscopes
 

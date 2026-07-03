@@ -1,28 +1,33 @@
 """
-PyVISA Oscilloscope Screenshot Tool - GUI
-A PyQt6-based GUI for capturing screenshots from multiple VISA instruments.
+PyVISA Instrument Capture Tool - GUI
+A PyQt6-based GUI for screenshots and measurements from multiple VISA instruments.
 """
 import sys
 import os
+import time
 from datetime import datetime
 from typing import List, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QCheckBox, QLineEdit, QScrollArea,
-    QFrame, QSizePolicy, QTextEdit, QSpacerItem
+    QFrame, QTextEdit, QComboBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont, QIcon, QPixmap
 
 import pyvisa
-from pyvisa.errors import VisaIOError
 
-# Import functions from oscilloscope_control
 from oscilloscope_control import (
-    open_scope, capture_screenshot_display, read_binblock,
-    AUTOSCALE_DEFAULT_ENABLED, AUTOSCALE_WAIT_SECONDS, TIMEBASE_SECONDS_PER_DIVISION
+    DMM6500_MEASUREMENT_OPTIONS,
+    TIMEBASE_SECONDS_PER_DIVISION,
+    capture_screenshot_display,
+    detect_supported_instrument_type,
+    get_dmm6500_unit,
+    get_oscilloscope_vendor,
+    measure_dmm6500,
+    open_scope,
+    read_binblock,
 )
 
 
@@ -31,7 +36,9 @@ class Device:
     """Represents a VISA device."""
     id: str
     name: str
-    device_type: str
+    interface_type: str
+    instrument_type: str = "unknown"
+    idn: str = ""
     connected: bool = True
     enabled: bool = False
 
@@ -47,31 +54,35 @@ class ScanThread(QThread):
             resources = rm.list_resources()
             devices = []
             for resource in resources:
-                # Parse resource name to get device info
-                device_type = "Unknown"
+                interface_type = self._detect_interface_type(resource)
+                idn = ""
                 name = resource
-                if "USB" in resource:
-                    device_type = "USB"
-                    # Try to get IDN
-                    try:
-                        inst = rm.open_resource(resource)
-                        inst.timeout = 2000
-                        idn = inst.query("*IDN?").strip()
-                        inst.close()
-                        name = idn.split(",")[1] if "," in idn else idn[:30]
-                    except:
-                        name = resource.split("::")[3] if len(resource.split("::")) > 3 else resource
-                elif "GPIB" in resource:
-                    device_type = "GPIB"
-                elif "TCPIP" in resource:
-                    device_type = "TCP/IP"
-                elif "ASRL" in resource:
-                    device_type = "Serial"
+                inst = None
+
+                try:
+                    inst = rm.open_resource(resource)
+                    inst.timeout = 2000
+                    inst.write_termination = '\n'
+                    inst.read_termination = '\n'
+                    idn = inst.query("*IDN?").strip()
+                    name = self._extract_display_name(idn, resource)
+                except Exception:
+                    name = resource.split("::")[3] if len(resource.split("::")) > 3 else resource
+                finally:
+                    if inst is not None:
+                        try:
+                            inst.close()
+                        except Exception:
+                            pass
+
+                instrument_type = detect_supported_instrument_type(resource, idn)
                 
                 devices.append(Device(
                     id=resource,
                     name=name,
-                    device_type=device_type,
+                    interface_type=interface_type,
+                    instrument_type=instrument_type,
+                    idn=idn,
                     connected=True,
                     enabled=False
                 ))
@@ -79,21 +90,49 @@ class ScanThread(QThread):
         except Exception as e:
             self.error_occurred.emit(str(e))
 
+    @staticmethod
+    def _detect_interface_type(resource: str) -> str:
+        if "USB" in resource:
+            return "USB"
+        if "GPIB" in resource:
+            return "GPIB"
+        if "TCPIP" in resource:
+            return "TCP/IP"
+        if "ASRL" in resource:
+            return "Serial"
+        return "Unknown"
+
+    @staticmethod
+    def _extract_display_name(idn: str, resource: str) -> str:
+        if not idn:
+            return resource
+        parts = [part.strip() for part in idn.split(',')]
+        if len(parts) >= 2 and parts[1]:
+            return parts[1]
+        return idn[:30]
+
 
 class CaptureThread(QThread):
-    """Thread for capturing screenshots without blocking the UI."""
+    """Thread for capturing data from enabled instruments without blocking the UI."""
     capture_started = pyqtSignal(str)
     capture_completed = pyqtSignal(str, str)  # device_id, filepath
     capture_failed = pyqtSignal(str, str)  # device_id, error
     all_completed = pyqtSignal()
 
-    def __init__(self, devices: List[Device], folder: str, mode: int, 
-                 timebase: Optional[float] = None):
+    def __init__(self,
+                 devices: List[Device],
+                 folder: str,
+                 mode: int,
+                 timebase: Optional[float] = None,
+                 dmm_measurement_function: str = 'VOLT:DC',
+                 dmm_measurement_range: Optional[float] = None):
         super().__init__()
         self.devices = devices
         self.folder = folder
         self.mode = mode  # 0=As Is, 1=AutoScale, 2=Custom
         self.timebase = timebase
+        self.dmm_measurement_function = dmm_measurement_function
+        self.dmm_measurement_range = dmm_measurement_range
 
     def run(self):
         for device in self.devices:
@@ -101,49 +140,91 @@ class CaptureThread(QThread):
                 continue
             self.capture_started.emit(device.id)
             try:
-                # Generate unique filename
-                timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-                safe_name = device.name.replace(" ", "_").replace("/", "-")[:20]
-                filename = f"scope_{safe_name}_{timestamp_str}.png"
-                filepath = os.path.join(self.folder, filename)
-                
-                # Capture screenshot based on mode
-                if self.mode == 0:
-                    # As It Is - capture without any changes
-                    self._capture_as_is(device.id, filepath)
-                elif self.mode == 1:
-                    # AutoScale mode
-                    capture_screenshot_display(
-                        resource_name=device.id,
-                        folder=self.folder,
-                        autoscale=True,
-                        timebase_scale=None
-                    )
+                if device.instrument_type == 'dmm6500':
+                    filepath = self._capture_dmm_measurement(device)
                 else:
-                    # Custom Time Base mode
-                    capture_screenshot_display(
-                        resource_name=device.id,
-                        folder=self.folder,
-                        autoscale=False,
-                        timebase_scale=self.timebase
-                    )
+                    filepath = self._capture_oscilloscope(device)
+
                 self.capture_completed.emit(device.id, filepath)
             except Exception as e:
                 self.capture_failed.emit(device.id, str(e))
         self.all_completed.emit()
 
-    def _capture_as_is(self, resource_name: str, filepath: str):
-        """Capture screenshot without changing any oscilloscope settings."""
-        scope = open_scope(resource_name)
+    def _capture_oscilloscope(self, device: Device) -> str:
+        if self.mode == 0:
+            return self._capture_scope_as_is(device)
+        if self.mode == 1:
+            return capture_screenshot_display(
+                resource_name=device.id,
+                folder=self.folder,
+                autoscale=True,
+                timebase_scale=None,
+            )
+        return capture_screenshot_display(
+            resource_name=device.id,
+            folder=self.folder,
+            autoscale=False,
+            timebase_scale=self.timebase,
+        )
+
+    def _capture_scope_as_is(self, device: Device) -> str:
+        """Capture oscilloscope screenshot without changing any settings."""
+        vendor = get_oscilloscope_vendor(device.id)
+        ext = 'bmp' if vendor == 'siglent' else 'png'
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name = self._safe_name(device.name)
+        filename = f"scope_{safe_name}_{timestamp_str}.{ext}"
+        filepath = os.path.join(self.folder, filename)
+
+        os.makedirs(self.folder, exist_ok=True)
+        scope = open_scope(device.id)
         try:
-            # Just capture, no AutoScale, no TimeBase changes
-            scope.write(':DISPlay:DATA? PNG, COLOR')
-            image_data = read_binblock(scope)
-            
+            if vendor == 'siglent':
+                scope.write(':SCDP')
+                time.sleep(1.0)
+                image_data = scope.read_raw()
+            else:
+                scope.write(':DISPlay:DATA? PNG, COLOR')
+                image_data = read_binblock(scope)
+
             with open(filepath, 'wb') as f:
                 f.write(image_data)
         finally:
             scope.close()
+
+        return filepath
+
+    def _capture_dmm_measurement(self, device: Device) -> str:
+        """Capture a single DMM6500 reading and save it to a text file."""
+        timestamp = datetime.now()
+        timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S")
+        safe_name = self._safe_name(device.name)
+        filename = f"dmm6500_{safe_name}_{timestamp_str}.txt"
+        filepath = os.path.join(self.folder, filename)
+
+        os.makedirs(self.folder, exist_ok=True)
+
+        value = measure_dmm6500(
+            resource_name=device.id,
+            measurement_function=self.dmm_measurement_function,
+            measurement_range=self.dmm_measurement_range,
+        )
+        unit = get_dmm6500_unit(self.dmm_measurement_function)
+        range_text = 'AUTO' if self.dmm_measurement_range is None else str(self.dmm_measurement_range)
+
+        with open(filepath, 'w', encoding='utf-8') as result_file:
+            result_file.write(f"Timestamp: {timestamp.isoformat()}\n")
+            result_file.write(f"Device: {device.id}\n")
+            result_file.write(f"IDN: {device.idn or 'N/A'}\n")
+            result_file.write(f"Measurement Function: {self.dmm_measurement_function}\n")
+            result_file.write(f"Measurement Range: {range_text}\n")
+            result_file.write(f"Value: {value} {unit}\n")
+
+        return filepath
+
+    @staticmethod
+    def _safe_name(value: str) -> str:
+        return value.replace(" ", "_").replace("/", "-")[:20]
 
 
 class DeviceWidget(QFrame):
@@ -176,8 +257,8 @@ class DeviceWidget(QFrame):
         self.status_indicator.setProperty("connected", self.device.connected)
         layout.addWidget(self.status_indicator)
 
-        # Monitor icon placeholder (using text emoji for simplicity)
-        icon_label = QLabel("🖥")
+        icon_text = "📏" if self.device.instrument_type == 'dmm6500' else "🖥"
+        icon_label = QLabel(icon_text)
         icon_label.setStyleSheet("font-size: 14px;")
         layout.addWidget(icon_label)
 
@@ -189,7 +270,8 @@ class DeviceWidget(QFrame):
         name_label.setObjectName("deviceName")
         info_layout.addWidget(name_label)
         
-        details_label = QLabel(f"{self.device.device_type} • {self.device.id}")
+        instrument_label = self._get_instrument_label()
+        details_label = QLabel(f"{instrument_label} • {self.device.interface_type} • {self.device.id}")
         details_label.setObjectName("deviceDetails")
         info_layout.addWidget(details_label)
         
@@ -212,6 +294,13 @@ class DeviceWidget(QFrame):
 
     def mousePressEvent(self, event):
         self.checkbox.setChecked(not self.checkbox.isChecked())
+
+    def _get_instrument_label(self) -> str:
+        if self.device.instrument_type == 'oscilloscope':
+            return 'Oscilloscope'
+        if self.device.instrument_type == 'dmm6500':
+            return 'Keithley DMM6500'
+        return 'Unknown Instrument'
 
 
 class DevicePanel(QFrame):
@@ -320,6 +409,7 @@ class ControlPanel(QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.selected_instrument_type = 'oscilloscope'
         self.setup_ui()
 
     def setup_ui(self):
@@ -388,7 +478,7 @@ class ControlPanel(QFrame):
         icon_label2.setStyleSheet("font-size: 14px;")
         header_layout2.addWidget(icon_label2)
 
-        title_label2 = QLabel("Oscilloscope Settings")
+        title_label2 = QLabel("Instrument Settings")
         title_label2.setObjectName("panelTitle")
         header_layout2.addWidget(title_label2)
         header_layout2.addStretch()
@@ -401,15 +491,24 @@ class ControlPanel(QFrame):
         content_layout.setContentsMargins(16, 16, 16, 16)
         content_layout.setSpacing(16)
 
-        # Capture Mode label
+        # Active instrument label
+        self.instrument_label = QLabel("Active Instrument: Oscilloscope")
+        self.instrument_label.setObjectName("settingLabel")
+        content_layout.addWidget(self.instrument_label)
+
+        # Oscilloscope settings container
+        self.scope_settings_container = QWidget()
+        scope_settings_layout = QVBoxLayout(self.scope_settings_container)
+        scope_settings_layout.setContentsMargins(0, 0, 0, 0)
+        scope_settings_layout.setSpacing(16)
+
         mode_label = QLabel("Capture Mode")
         mode_label.setObjectName("settingLabel")
-        content_layout.addWidget(mode_label)
+        scope_settings_layout.addWidget(mode_label)
 
-        # Three mode buttons in a row
         buttons_layout = QHBoxLayout()
         buttons_layout.setSpacing(8)
-        
+
         self.mode_btn_asis = QPushButton("As It Is")
         self.mode_btn_asis.setObjectName("modeButton")
         self.mode_btn_asis.setProperty("active", True)
@@ -417,7 +516,7 @@ class ControlPanel(QFrame):
         self.mode_btn_asis.setCursor(Qt.CursorShape.PointingHandCursor)
         self.mode_btn_asis.clicked.connect(lambda: self._on_mode_changed(0))
         buttons_layout.addWidget(self.mode_btn_asis)
-        
+
         self.mode_btn_auto = QPushButton("AutoScale")
         self.mode_btn_auto.setObjectName("modeButton")
         self.mode_btn_auto.setProperty("active", False)
@@ -425,7 +524,7 @@ class ControlPanel(QFrame):
         self.mode_btn_auto.setCursor(Qt.CursorShape.PointingHandCursor)
         self.mode_btn_auto.clicked.connect(lambda: self._on_mode_changed(1))
         buttons_layout.addWidget(self.mode_btn_auto)
-        
+
         self.mode_btn_custom = QPushButton("Custom Time Base")
         self.mode_btn_custom.setObjectName("modeButton")
         self.mode_btn_custom.setProperty("active", False)
@@ -433,14 +532,13 @@ class ControlPanel(QFrame):
         self.mode_btn_custom.setCursor(Qt.CursorShape.PointingHandCursor)
         self.mode_btn_custom.clicked.connect(lambda: self._on_mode_changed(2))
         buttons_layout.addWidget(self.mode_btn_custom)
-        
-        content_layout.addLayout(buttons_layout)
-        
+
+        scope_settings_layout.addLayout(buttons_layout)
+
         self.current_mode = 0  # 0=As Is, 1=AutoScale, 2=Custom
 
-        # TimeBase input (hidden by default)
         self.timebase_container = QWidget()
-        self.timebase_container.setVisible(False)  # Hidden by default
+        self.timebase_container.setVisible(False)
         timebase_layout = QVBoxLayout(self.timebase_container)
         timebase_layout.setContentsMargins(0, 0, 0, 0)
         timebase_layout.setSpacing(8)
@@ -458,7 +556,40 @@ class ControlPanel(QFrame):
         timebase_hint.setObjectName("settingHint")
         timebase_layout.addWidget(timebase_hint)
 
-        content_layout.addWidget(self.timebase_container)
+        scope_settings_layout.addWidget(self.timebase_container)
+        content_layout.addWidget(self.scope_settings_container)
+
+        # DMM6500 settings container
+        self.dmm_settings_container = QWidget()
+        dmm_layout = QVBoxLayout(self.dmm_settings_container)
+        dmm_layout.setContentsMargins(0, 0, 0, 0)
+        dmm_layout.setSpacing(12)
+
+        dmm_function_label = QLabel("Measurement Type")
+        dmm_function_label.setObjectName("settingLabel")
+        dmm_layout.addWidget(dmm_function_label)
+
+        self.dmm_measurement_combo = QComboBox()
+        self.dmm_measurement_combo.setObjectName("settingInput")
+        for display_name, scpi_function in DMM6500_MEASUREMENT_OPTIONS.items():
+            self.dmm_measurement_combo.addItem(display_name, scpi_function)
+        dmm_layout.addWidget(self.dmm_measurement_combo)
+
+        dmm_range_label = QLabel("Measurement Range")
+        dmm_range_label.setObjectName("settingLabel")
+        dmm_layout.addWidget(dmm_range_label)
+
+        self.dmm_range_input = QLineEdit()
+        self.dmm_range_input.setObjectName("settingInput")
+        self.dmm_range_input.setPlaceholderText("AUTO (leave empty) or numeric value")
+        dmm_layout.addWidget(self.dmm_range_input)
+
+        dmm_range_hint = QLabel("Examples: 10 (V), 0.1 (A), 1e6 (Ohm). Empty = Auto range")
+        dmm_range_hint.setObjectName("settingHint")
+        dmm_layout.addWidget(dmm_range_hint)
+
+        content_layout.addWidget(self.dmm_settings_container)
+        self.dmm_settings_container.setVisible(False)
 
         settings_layout.addWidget(settings_content)
         layout.addWidget(settings_panel)
@@ -479,6 +610,20 @@ class ControlPanel(QFrame):
         
         # Show/hide timebase input - only visible for Custom mode
         self.timebase_container.setVisible(mode == 2)
+
+    def set_selected_instrument_type(self, instrument_type: str):
+        """Switches settings panel content based on selected instrument type."""
+        resolved = instrument_type if instrument_type in ('oscilloscope', 'dmm6500') else 'oscilloscope'
+        self.selected_instrument_type = resolved
+
+        if resolved == 'dmm6500':
+            self.instrument_label.setText("Active Instrument: Keithley DMM6500")
+            self.scope_settings_container.setVisible(False)
+            self.dmm_settings_container.setVisible(True)
+        else:
+            self.instrument_label.setText("Active Instrument: Oscilloscope")
+            self.scope_settings_container.setVisible(True)
+            self.dmm_settings_container.setVisible(False)
 
     def update_capture_button(self, enabled_count: int, is_capturing: bool):
         if is_capturing:
@@ -511,10 +656,34 @@ class ControlPanel(QFrame):
         text = self.timebase_input.text().strip()
         if text:
             try:
-                return float(text)
+                value = float(text)
+                if value <= 0:
+                    return None
+                return value
             except ValueError:
                 return None
         return None
+
+    def get_timebase_text(self) -> str:
+        return self.timebase_input.text().strip()
+
+    def get_dmm_measurement_function(self) -> str:
+        return self.dmm_measurement_combo.currentData() or 'VOLT:DC'
+
+    def get_dmm_measurement_range(self) -> Optional[float]:
+        text = self.dmm_range_input.text().strip()
+        if not text:
+            return None
+        try:
+            value = float(text)
+            if value <= 0:
+                return None
+            return value
+        except ValueError:
+            return None
+
+    def get_dmm_measurement_range_text(self) -> str:
+        return self.dmm_range_input.text().strip()
 
 
 class TerminalPanel(QFrame):
@@ -598,6 +767,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.scan_thread: Optional[ScanThread] = None
         self.capture_thread: Optional[CaptureThread] = None
+        self.active_instrument_type: str = 'oscilloscope'
+        self._mixed_selection_logged: bool = False
         self.setup_ui()
         self.load_stylesheet()
         
@@ -605,7 +776,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(500, self.scan_devices)
 
     def setup_ui(self):
-        self.setWindowTitle("Oscilloscope Screenshot Tool")
+        self.setWindowTitle("VISA Instrument Capture Tool")
         self.setMinimumSize(500, 700)
         self.resize(520, 750)
 
@@ -636,11 +807,11 @@ class MainWindow(QMainWindow):
         title_container = QVBoxLayout()
         title_container.setSpacing(2)
         
-        title = QLabel("Oscilloscope Screenshot Tool")
+        title = QLabel("VISA Instrument Capture Tool")
         title.setObjectName("appTitle")
         title_container.addWidget(title)
         
-        subtitle = QLabel("Simultaneous capture from multiple VISA instruments")
+        subtitle = QLabel("Screenshots and measurements from multiple VISA instruments")
         subtitle.setObjectName("appSubtitle")
         title_container.addWidget(subtitle)
         
@@ -670,7 +841,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.terminal_panel, 1)
 
         # Footer
-        footer = QLabel("PyVISA Multi-Instrument Control • v1.0")
+        footer = QLabel("PyVISA Multi-Instrument Control • v1.1")
         footer.setObjectName("footer")
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main_layout.addWidget(footer)
@@ -697,9 +868,44 @@ class MainWindow(QMainWindow):
             self.setStyleSheet(DARK_STYLESHEET)
 
     def _update_capture_button(self):
-        enabled_count = len(self.device_panel.get_enabled_devices())
+        enabled_devices = self.device_panel.get_enabled_devices()
+        enabled_count = len(enabled_devices)
         is_capturing = self.capture_thread is not None and self.capture_thread.isRunning()
+        self._update_active_instrument_type(enabled_devices)
         self.control_panel.update_capture_button(enabled_count, is_capturing)
+
+    def _update_active_instrument_type(self, enabled_devices: Optional[List[Device]] = None):
+        if enabled_devices is None:
+            enabled_devices = self.device_panel.get_enabled_devices()
+
+        if not enabled_devices:
+            self.active_instrument_type = 'oscilloscope'
+            self._mixed_selection_logged = False
+            self.control_panel.set_selected_instrument_type(self.active_instrument_type)
+            return
+
+        contains_scope = any(device.instrument_type == 'oscilloscope' for device in enabled_devices)
+        contains_dmm = any(device.instrument_type == 'dmm6500' for device in enabled_devices)
+
+        if contains_scope and contains_dmm:
+            self.active_instrument_type = 'oscilloscope'
+            self.control_panel.set_selected_instrument_type(self.active_instrument_type)
+            if not self._mixed_selection_logged:
+                self.terminal_panel.add_log(
+                    'warning',
+                    'Mixed selection detected (oscilloscope + DMM6500). Settings panel shows oscilloscope options; each device will use its own mode.'
+                )
+                self._mixed_selection_logged = True
+            return
+
+        self._mixed_selection_logged = False
+
+        if contains_dmm:
+            self.active_instrument_type = 'dmm6500'
+        else:
+            self.active_instrument_type = 'oscilloscope'
+
+        self.control_panel.set_selected_instrument_type(self.active_instrument_type)
 
     def scan_devices(self):
         if self.scan_thread and self.scan_thread.isRunning():
@@ -725,6 +931,13 @@ class MainWindow(QMainWindow):
             self.terminal_panel.add_log("success", f"Found {len(devices)} device(s)")
         else:
             self.terminal_panel.add_log("warning", "No VISA devices found")
+
+        dmm_count = sum(1 for device in devices if device.instrument_type == 'dmm6500')
+        scope_count = sum(1 for device in devices if device.instrument_type == 'oscilloscope')
+        if scope_count:
+            self.terminal_panel.add_log("info", f"Detected oscilloscopes: {scope_count}")
+        if dmm_count:
+            self.terminal_panel.add_log("info", f"Detected Keithley DMM6500: {dmm_count}")
         
         self._update_capture_button()
 
@@ -737,27 +950,58 @@ class MainWindow(QMainWindow):
         if not enabled_devices:
             return
 
-        # Get settings
+        # Get oscilloscope settings
         mode = self.control_panel.get_mode()
         timebase = self.control_panel.get_timebase()
+        timebase_text = self.control_panel.get_timebase_text()
+        dmm_function = self.control_panel.get_dmm_measurement_function()
+        dmm_range = self.control_panel.get_dmm_measurement_range()
+        dmm_range_text = self.control_panel.get_dmm_measurement_range_text()
         
         # Default save folder
         folder = os.path.join(os.path.expanduser("~"), "Pictures", "Oscilloscope")
         os.makedirs(folder, exist_ok=True)
 
         self.terminal_panel.add_log("info", f"Starting capture on {len(enabled_devices)} device(s)...")
-        
-        if mode == 0:
-            self.terminal_panel.add_log("info", "Mode: As It Is (no changes)")
-        elif mode == 1:
-            self.terminal_panel.add_log("info", "Mode: AutoScale enabled")
-        else:
-            tb = timebase if timebase else TIMEBASE_SECONDS_PER_DIVISION
-            self.terminal_panel.add_log("info", f"Mode: Custom TimeBase ({tb} sec/div)")
+
+        has_scope = any(device.instrument_type == 'oscilloscope' for device in enabled_devices)
+        has_dmm = any(device.instrument_type == 'dmm6500' for device in enabled_devices)
+
+        if has_scope and mode == 2 and timebase_text and timebase is None:
+            self.terminal_panel.add_log("error", "Invalid custom time base. Use a positive numeric value (e.g. 0.001).")
+            return
+
+        if has_dmm and dmm_range_text and dmm_range is None:
+            self.terminal_panel.add_log("error", "Invalid DMM6500 range. Leave empty for AUTO or enter a positive numeric value.")
+            return
+
+        if has_scope:
+            if mode == 0:
+                self.terminal_panel.add_log("info", "Oscilloscope mode: As It Is (no changes)")
+            elif mode == 1:
+                self.terminal_panel.add_log("info", "Oscilloscope mode: AutoScale enabled")
+            else:
+                tb = timebase if timebase else TIMEBASE_SECONDS_PER_DIVISION
+                self.terminal_panel.add_log("info", f"Oscilloscope mode: Custom TimeBase ({tb} sec/div)")
+
+        if has_dmm:
+            unit = get_dmm6500_unit(dmm_function)
+            range_text = 'AUTO' if dmm_range is None else f"{dmm_range}"
+            self.terminal_panel.add_log(
+                "info",
+                f"DMM6500 mode: {dmm_function} ({unit}), range: {range_text}"
+            )
 
         self._update_capture_button()
 
-        self.capture_thread = CaptureThread(enabled_devices, folder, mode, timebase)
+        self.capture_thread = CaptureThread(
+            enabled_devices,
+            folder,
+            mode,
+            timebase,
+            dmm_measurement_function=dmm_function,
+            dmm_measurement_range=dmm_range,
+        )
         self.capture_thread.capture_started.connect(self._on_capture_started)
         self.capture_thread.capture_completed.connect(self._on_capture_completed)
         self.capture_thread.capture_failed.connect(self._on_capture_failed)
@@ -770,7 +1014,11 @@ class MainWindow(QMainWindow):
         self.terminal_panel.add_log("info", f"Capturing from {device_id}...")
 
     def _on_capture_completed(self, device_id: str, filepath: str):
-        self.terminal_panel.add_log("success", f"Screenshot saved: {os.path.basename(filepath)}")
+        file_name = os.path.basename(filepath)
+        if file_name.lower().endswith('.txt'):
+            self.terminal_panel.add_log("success", f"Measurement saved: {file_name}")
+        else:
+            self.terminal_panel.add_log("success", f"Screenshot saved: {file_name}")
 
     def _on_capture_failed(self, device_id: str, error: str):
         self.terminal_panel.add_log("error", f"Failed {device_id}: {error}")
