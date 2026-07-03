@@ -45,6 +45,7 @@ DMM6500_MEASUREMENT_OPTIONS: Dict[str, str] = {
     'Resistance 2W (Ohm)': 'RES',
     'Resistance 4W (Ohm)': 'FRES',
     'Frequency (Hz)': 'FREQ',
+    'Period (s)': 'PER',
 }
 
 DMM6500_UNITS: Dict[str, str] = {
@@ -55,6 +56,7 @@ DMM6500_UNITS: Dict[str, str] = {
     'RES': 'Ohm',
     'FRES': 'Ohm',
     'FREQ': 'Hz',
+    'PER': 's',
 }
 
 
@@ -189,17 +191,19 @@ def configure_dmm6500_measurement(dmm: MessageBasedResource,
 
 def measure_dmm6500(resource_name: str,
                     measurement_function: str = 'VOLT:DC',
-                    measurement_range: Optional[float] = None) -> float:
+                    measurement_range: Optional[float] = None,
+                    apply_configuration: bool = True) -> float:
     """
     Performs a single measurement with Keithley DMM6500 and returns a float value.
     """
     dmm = open_instrument(resource_name)
     try:
-        configure_dmm6500_measurement(
-            dmm,
-            measurement_function=measurement_function,
-            measurement_range=measurement_range,
-        )
+        if apply_configuration:
+            configure_dmm6500_measurement(
+                dmm,
+                measurement_function=measurement_function,
+                measurement_range=measurement_range,
+            )
         raw_value = dmm.query(':READ?').strip()
         value_token = raw_value.split(',')[0].strip()
         return float(value_token)

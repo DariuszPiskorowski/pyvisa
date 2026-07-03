@@ -14,12 +14,11 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QCheckBox, QLineEdit, QScrollArea,
     QFrame, QTextEdit, QComboBox
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSettings
 
 import pyvisa
 
 from oscilloscope_control import (
-    DMM6500_MEASUREMENT_OPTIONS,
     TIMEBASE_SECONDS_PER_DIVISION,
     capture_screenshot_display,
     detect_supported_instrument_type,
@@ -125,7 +124,8 @@ class CaptureThread(QThread):
                  mode: int,
                  timebase: Optional[float] = None,
                  dmm_measurement_function: str = 'VOLT:DC',
-                 dmm_measurement_range: Optional[float] = None):
+                 dmm_measurement_range: Optional[float] = None,
+                 dmm_apply_configuration: bool = True):
         super().__init__()
         self.devices = devices
         self.folder = folder
@@ -133,6 +133,7 @@ class CaptureThread(QThread):
         self.timebase = timebase
         self.dmm_measurement_function = dmm_measurement_function
         self.dmm_measurement_range = dmm_measurement_range
+        self.dmm_apply_configuration = dmm_apply_configuration
 
     def run(self):
         for device in self.devices:
@@ -208,15 +209,24 @@ class CaptureThread(QThread):
             resource_name=device.id,
             measurement_function=self.dmm_measurement_function,
             measurement_range=self.dmm_measurement_range,
+            apply_configuration=self.dmm_apply_configuration,
         )
         unit = get_dmm6500_unit(self.dmm_measurement_function)
-        range_text = 'AUTO' if self.dmm_measurement_range is None else str(self.dmm_measurement_range)
+        if not self.dmm_apply_configuration:
+            mode_text = 'CUSTOM (AS IS)'
+            function_text = 'AS_IS'
+            range_text = 'AS_IS'
+        else:
+            mode_text = 'AUTO'
+            function_text = self.dmm_measurement_function
+            range_text = 'AUTO' if self.dmm_measurement_range is None else str(self.dmm_measurement_range)
 
         with open(filepath, 'w', encoding='utf-8') as result_file:
             result_file.write(f"Timestamp: {timestamp.isoformat()}\n")
             result_file.write(f"Device: {device.id}\n")
             result_file.write(f"IDN: {device.idn or 'N/A'}\n")
-            result_file.write(f"Measurement Function: {self.dmm_measurement_function}\n")
+            result_file.write(f"DMM Mode: {mode_text}\n")
+            result_file.write(f"Measurement Function: {function_text}\n")
             result_file.write(f"Measurement Range: {range_text}\n")
             result_file.write(f"Value: {value} {unit}\n")
 
@@ -406,10 +416,14 @@ class DevicePanel(QFrame):
 class ControlPanel(QFrame):
     """Panel with capture button and oscilloscope settings."""
     capture_requested = pyqtSignal()
+    settings_changed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.selected_instrument_type = 'oscilloscope'
+        self._dmm_mm_mode = 'auto'  # auto|custom
+        self._dmm_mm_function = 'V'
+        self._dmm_mixed_function = 'CURR:DC'
         self.setup_ui()
 
     def setup_ui(self):
@@ -550,6 +564,7 @@ class ControlPanel(QFrame):
         self.timebase_input = QLineEdit()
         self.timebase_input.setObjectName("settingInput")
         self.timebase_input.setPlaceholderText("0.001 (default)")
+        self.timebase_input.textChanged.connect(self.settings_changed.emit)
         timebase_layout.addWidget(self.timebase_input)
 
         timebase_hint = QLabel("Leave empty for default (1ms/div)")
@@ -559,34 +574,131 @@ class ControlPanel(QFrame):
         scope_settings_layout.addWidget(self.timebase_container)
         content_layout.addWidget(self.scope_settings_container)
 
-        # DMM6500 settings container
+        # DMM6500 settings container (multimeter only)
         self.dmm_settings_container = QWidget()
         dmm_layout = QVBoxLayout(self.dmm_settings_container)
         dmm_layout.setContentsMargins(0, 0, 0, 0)
         dmm_layout.setSpacing(12)
 
-        dmm_function_label = QLabel("Measurement Type")
+        dmm_function_label = QLabel("Multimeter Mode")
         dmm_function_label.setObjectName("settingLabel")
         dmm_layout.addWidget(dmm_function_label)
 
-        self.dmm_measurement_combo = QComboBox()
-        self.dmm_measurement_combo.setObjectName("settingInput")
-        for display_name, scpi_function in DMM6500_MEASUREMENT_OPTIONS.items():
-            self.dmm_measurement_combo.addItem(display_name, scpi_function)
-        dmm_layout.addWidget(self.dmm_measurement_combo)
+        mm_mode_layout = QHBoxLayout()
+        mm_mode_layout.setSpacing(8)
 
-        dmm_range_label = QLabel("Measurement Range")
-        dmm_range_label.setObjectName("settingLabel")
-        dmm_layout.addWidget(dmm_range_label)
+        self.mm_mode_auto_btn = QPushButton("Auto")
+        self.mm_mode_auto_btn.setObjectName("modeButton")
+        self.mm_mode_auto_btn.setProperty("active", True)
+        self.mm_mode_auto_btn.setFixedHeight(36)
+        self.mm_mode_auto_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mm_mode_auto_btn.clicked.connect(lambda: self._on_mm_mode_changed('auto'))
+        mm_mode_layout.addWidget(self.mm_mode_auto_btn)
 
-        self.dmm_range_input = QLineEdit()
-        self.dmm_range_input.setObjectName("settingInput")
-        self.dmm_range_input.setPlaceholderText("AUTO (leave empty) or numeric value")
-        dmm_layout.addWidget(self.dmm_range_input)
+        self.mm_mode_custom_btn = QPushButton("Custom")
+        self.mm_mode_custom_btn.setObjectName("modeButton")
+        self.mm_mode_custom_btn.setProperty("active", False)
+        self.mm_mode_custom_btn.setFixedHeight(36)
+        self.mm_mode_custom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mm_mode_custom_btn.clicked.connect(lambda: self._on_mm_mode_changed('custom'))
+        mm_mode_layout.addWidget(self.mm_mode_custom_btn)
 
-        dmm_range_hint = QLabel("Examples: 10 (V), 0.1 (A), 1e6 (Ohm). Empty = Auto range")
-        dmm_range_hint.setObjectName("settingHint")
-        dmm_layout.addWidget(dmm_range_hint)
+        dmm_layout.addLayout(mm_mode_layout)
+
+        dmm_mode_hint = QLabel("Custom = As It Is on multimeter. Auto = force AUTO range.")
+        dmm_mode_hint.setObjectName("settingHint")
+        dmm_layout.addWidget(dmm_mode_hint)
+
+        dmm_function_label2 = QLabel("Measurement Type")
+        dmm_function_label2.setObjectName("settingLabel")
+        dmm_layout.addWidget(dmm_function_label2)
+
+        mm_function_layout = QHBoxLayout()
+        mm_function_layout.setSpacing(8)
+
+        self.mm_func_v_btn = QPushButton("V")
+        self.mm_func_v_btn.setObjectName("modeButton")
+        self.mm_func_v_btn.setProperty("active", True)
+        self.mm_func_v_btn.setFixedHeight(36)
+        self.mm_func_v_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mm_func_v_btn.clicked.connect(lambda: self._on_mm_function_changed('V'))
+        mm_function_layout.addWidget(self.mm_func_v_btn)
+
+        self.mm_func_a_btn = QPushButton("A")
+        self.mm_func_a_btn.setObjectName("modeButton")
+        self.mm_func_a_btn.setProperty("active", False)
+        self.mm_func_a_btn.setFixedHeight(36)
+        self.mm_func_a_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mm_func_a_btn.clicked.connect(lambda: self._on_mm_function_changed('A'))
+        mm_function_layout.addWidget(self.mm_func_a_btn)
+
+        self.mm_func_freq_btn = QPushButton("Freq")
+        self.mm_func_freq_btn.setObjectName("modeButton")
+        self.mm_func_freq_btn.setProperty("active", False)
+        self.mm_func_freq_btn.setFixedHeight(36)
+        self.mm_func_freq_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mm_func_freq_btn.clicked.connect(lambda: self._on_mm_function_changed('FREQ'))
+        mm_function_layout.addWidget(self.mm_func_freq_btn)
+
+        self.mm_func_period_btn = QPushButton("Period")
+        self.mm_func_period_btn.setObjectName("modeButton")
+        self.mm_func_period_btn.setProperty("active", False)
+        self.mm_func_period_btn.setFixedHeight(36)
+        self.mm_func_period_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mm_func_period_btn.clicked.connect(lambda: self._on_mm_function_changed('PERIOD'))
+        mm_function_layout.addWidget(self.mm_func_period_btn)
+
+        self.mm_func_ohms_btn = QPushButton("Ohms")
+        self.mm_func_ohms_btn.setObjectName("modeButton")
+        self.mm_func_ohms_btn.setProperty("active", False)
+        self.mm_func_ohms_btn.setFixedHeight(36)
+        self.mm_func_ohms_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mm_func_ohms_btn.clicked.connect(lambda: self._on_mm_function_changed('OHMS'))
+        mm_function_layout.addWidget(self.mm_func_ohms_btn)
+
+        dmm_layout.addLayout(mm_function_layout)
+
+        mm_function_hint = QLabel("V/A use DC mode in MM-only view.")
+        mm_function_hint.setObjectName("settingHint")
+        dmm_layout.addWidget(mm_function_hint)
+
+        # Mixed mode DMM settings container
+        self.mixed_dmm_settings_container = QWidget()
+        mixed_layout = QVBoxLayout(self.mixed_dmm_settings_container)
+        mixed_layout.setContentsMargins(0, 0, 0, 0)
+        mixed_layout.setSpacing(12)
+
+        mixed_label = QLabel("Mixed Mode DMM (AUTO range)")
+        mixed_label.setObjectName("settingLabel")
+        mixed_layout.addWidget(mixed_label)
+
+        mixed_buttons_layout = QHBoxLayout()
+        mixed_buttons_layout.setSpacing(8)
+
+        self.mixed_dmm_ac_btn = QPushButton("A AC")
+        self.mixed_dmm_ac_btn.setObjectName("modeButton")
+        self.mixed_dmm_ac_btn.setProperty("active", False)
+        self.mixed_dmm_ac_btn.setFixedHeight(36)
+        self.mixed_dmm_ac_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mixed_dmm_ac_btn.clicked.connect(lambda: self._on_mixed_dmm_function_changed('CURR:AC'))
+        mixed_buttons_layout.addWidget(self.mixed_dmm_ac_btn)
+
+        self.mixed_dmm_dc_btn = QPushButton("A DC")
+        self.mixed_dmm_dc_btn.setObjectName("modeButton")
+        self.mixed_dmm_dc_btn.setProperty("active", True)
+        self.mixed_dmm_dc_btn.setFixedHeight(36)
+        self.mixed_dmm_dc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mixed_dmm_dc_btn.clicked.connect(lambda: self._on_mixed_dmm_function_changed('CURR:DC'))
+        mixed_buttons_layout.addWidget(self.mixed_dmm_dc_btn)
+
+        mixed_layout.addLayout(mixed_buttons_layout)
+
+        mixed_hint = QLabel("In mixed mode DMM uses AUTO range automatically.")
+        mixed_hint.setObjectName("settingHint")
+        mixed_layout.addWidget(mixed_hint)
+
+        content_layout.addWidget(self.mixed_dmm_settings_container)
+        self.mixed_dmm_settings_container.setVisible(False)
 
         content_layout.addWidget(self.dmm_settings_container)
         self.dmm_settings_container.setVisible(False)
@@ -610,20 +722,28 @@ class ControlPanel(QFrame):
         
         # Show/hide timebase input - only visible for Custom mode
         self.timebase_container.setVisible(mode == 2)
+        self.settings_changed.emit()
 
     def set_selected_instrument_type(self, instrument_type: str):
         """Switches settings panel content based on selected instrument type."""
-        resolved = instrument_type if instrument_type in ('oscilloscope', 'dmm6500') else 'oscilloscope'
+        resolved = instrument_type if instrument_type in ('oscilloscope', 'dmm6500', 'mixed') else 'oscilloscope'
         self.selected_instrument_type = resolved
 
         if resolved == 'dmm6500':
             self.instrument_label.setText("Active Instrument: Keithley DMM6500")
             self.scope_settings_container.setVisible(False)
             self.dmm_settings_container.setVisible(True)
+            self.mixed_dmm_settings_container.setVisible(False)
+        elif resolved == 'mixed':
+            self.instrument_label.setText("Active Instrument: Mixed (Oscilloscope + DMM6500)")
+            self.scope_settings_container.setVisible(True)
+            self.dmm_settings_container.setVisible(False)
+            self.mixed_dmm_settings_container.setVisible(True)
         else:
             self.instrument_label.setText("Active Instrument: Oscilloscope")
             self.scope_settings_container.setVisible(True)
             self.dmm_settings_container.setVisible(False)
+            self.mixed_dmm_settings_container.setVisible(False)
 
     def update_capture_button(self, enabled_count: int, is_capturing: bool):
         if is_capturing:
@@ -668,22 +788,95 @@ class ControlPanel(QFrame):
         return self.timebase_input.text().strip()
 
     def get_dmm_measurement_function(self) -> str:
-        return self.dmm_measurement_combo.currentData() or 'VOLT:DC'
+        if self.selected_instrument_type == 'mixed':
+            return self._dmm_mixed_function
+
+        mapping = {
+            'V': 'VOLT:DC',
+            'A': 'CURR:DC',
+            'FREQ': 'FREQ',
+            'PERIOD': 'PER',
+            'OHMS': 'RES',
+        }
+        return mapping.get(self._dmm_mm_function, 'VOLT:DC')
 
     def get_dmm_measurement_range(self) -> Optional[float]:
-        text = self.dmm_range_input.text().strip()
-        if not text:
-            return None
-        try:
-            value = float(text)
-            if value <= 0:
-                return None
-            return value
-        except ValueError:
-            return None
+        return None
 
     def get_dmm_measurement_range_text(self) -> str:
-        return self.dmm_range_input.text().strip()
+        return ''
+
+    def get_dmm_apply_configuration(self) -> bool:
+        if self.selected_instrument_type == 'mixed':
+            return True
+        return self._dmm_mm_mode == 'auto'
+
+    def _on_mm_mode_changed(self, mode: str):
+        self._dmm_mm_mode = mode
+        self.mm_mode_auto_btn.setProperty("active", mode == 'auto')
+        self.mm_mode_custom_btn.setProperty("active", mode == 'custom')
+        self._refresh_button_style(self.mm_mode_auto_btn)
+        self._refresh_button_style(self.mm_mode_custom_btn)
+        self.settings_changed.emit()
+
+    def _on_mm_function_changed(self, function_code: str):
+        self._dmm_mm_function = function_code
+        buttons = {
+            'V': self.mm_func_v_btn,
+            'A': self.mm_func_a_btn,
+            'FREQ': self.mm_func_freq_btn,
+            'PERIOD': self.mm_func_period_btn,
+            'OHMS': self.mm_func_ohms_btn,
+        }
+        for code, button in buttons.items():
+            button.setProperty("active", code == function_code)
+            self._refresh_button_style(button)
+        self.settings_changed.emit()
+
+    def _on_mixed_dmm_function_changed(self, function_code: str):
+        self._dmm_mixed_function = function_code
+        self.mixed_dmm_ac_btn.setProperty("active", function_code == 'CURR:AC')
+        self.mixed_dmm_dc_btn.setProperty("active", function_code == 'CURR:DC')
+        self._refresh_button_style(self.mixed_dmm_ac_btn)
+        self._refresh_button_style(self.mixed_dmm_dc_btn)
+        self.settings_changed.emit()
+
+    def set_scope_mode(self, mode: int):
+        if mode not in (0, 1, 2):
+            return
+        self._on_mode_changed(mode)
+
+    def set_timebase_text(self, value: str):
+        self.timebase_input.setText(value)
+
+    def set_mm_mode(self, mode: str):
+        if mode not in ('auto', 'custom'):
+            return
+        self._on_mm_mode_changed(mode)
+
+    def set_mm_function(self, function_code: str):
+        if function_code not in ('V', 'A', 'FREQ', 'PERIOD', 'OHMS'):
+            return
+        self._on_mm_function_changed(function_code)
+
+    def set_mixed_dmm_function(self, function_code: str):
+        if function_code not in ('CURR:AC', 'CURR:DC'):
+            return
+        self._on_mixed_dmm_function_changed(function_code)
+
+    def get_mm_mode(self) -> str:
+        return self._dmm_mm_mode
+
+    def get_mm_function(self) -> str:
+        return self._dmm_mm_function
+
+    def get_mixed_dmm_function(self) -> str:
+        return self._dmm_mixed_function
+
+    @staticmethod
+    def _refresh_button_style(button: QPushButton):
+        button.style().unpolish(button)
+        button.style().polish(button)
 
 
 class TerminalPanel(QFrame):
@@ -765,11 +958,14 @@ class MainWindow(QMainWindow):
     """Main application window."""
     def __init__(self):
         super().__init__()
+        self.settings = QSettings('DariuszPiskorowski', 'PyVISAInstrumentCaptureTool')
         self.scan_thread: Optional[ScanThread] = None
         self.capture_thread: Optional[CaptureThread] = None
         self.active_instrument_type: str = 'oscilloscope'
         self._mixed_selection_logged: bool = False
+        self._loading_settings: bool = False
         self.setup_ui()
+        self._load_ui_settings()
         self.load_stylesheet()
         
         # Auto-scan on startup
@@ -834,6 +1030,7 @@ class MainWindow(QMainWindow):
         # Control panel
         self.control_panel = ControlPanel()
         self.control_panel.capture_requested.connect(self.capture_screenshots)
+        self.control_panel.settings_changed.connect(self._save_ui_settings)
         main_layout.addWidget(self.control_panel)
 
         # Terminal panel
@@ -888,12 +1085,12 @@ class MainWindow(QMainWindow):
         contains_dmm = any(device.instrument_type == 'dmm6500' for device in enabled_devices)
 
         if contains_scope and contains_dmm:
-            self.active_instrument_type = 'oscilloscope'
+            self.active_instrument_type = 'mixed'
             self.control_panel.set_selected_instrument_type(self.active_instrument_type)
             if not self._mixed_selection_logged:
                 self.terminal_panel.add_log(
                     'warning',
-                    'Mixed selection detected (oscilloscope + DMM6500). Settings panel shows oscilloscope options; each device will use its own mode.'
+                    'Mixed selection detected. Oscilloscope uses scope settings. DMM6500 is AUTO range with selectable A AC/A DC.'
                 )
                 self._mixed_selection_logged = True
             return
@@ -957,6 +1154,7 @@ class MainWindow(QMainWindow):
         dmm_function = self.control_panel.get_dmm_measurement_function()
         dmm_range = self.control_panel.get_dmm_measurement_range()
         dmm_range_text = self.control_panel.get_dmm_measurement_range_text()
+        dmm_apply_configuration = self.control_panel.get_dmm_apply_configuration()
         
         # Default save folder
         folder = os.path.join(os.path.expanduser("~"), "Pictures", "Oscilloscope")
@@ -971,10 +1169,6 @@ class MainWindow(QMainWindow):
             self.terminal_panel.add_log("error", "Invalid custom time base. Use a positive numeric value (e.g. 0.001).")
             return
 
-        if has_dmm and dmm_range_text and dmm_range is None:
-            self.terminal_panel.add_log("error", "Invalid DMM6500 range. Leave empty for AUTO or enter a positive numeric value.")
-            return
-
         if has_scope:
             if mode == 0:
                 self.terminal_panel.add_log("info", "Oscilloscope mode: As It Is (no changes)")
@@ -985,12 +1179,15 @@ class MainWindow(QMainWindow):
                 self.terminal_panel.add_log("info", f"Oscilloscope mode: Custom TimeBase ({tb} sec/div)")
 
         if has_dmm:
-            unit = get_dmm6500_unit(dmm_function)
-            range_text = 'AUTO' if dmm_range is None else f"{dmm_range}"
-            self.terminal_panel.add_log(
-                "info",
-                f"DMM6500 mode: {dmm_function} ({unit}), range: {range_text}"
-            )
+            if dmm_apply_configuration:
+                unit = get_dmm6500_unit(dmm_function)
+                range_text = 'AUTO' if dmm_range is None else f"{dmm_range}"
+                self.terminal_panel.add_log(
+                    "info",
+                    f"DMM6500 mode: AUTO, function: {dmm_function} ({unit}), range: {range_text}"
+                )
+            else:
+                self.terminal_panel.add_log("info", "DMM6500 mode: CUSTOM (As It Is on multimeter)")
 
         self._update_capture_button()
 
@@ -1001,6 +1198,7 @@ class MainWindow(QMainWindow):
             timebase,
             dmm_measurement_function=dmm_function,
             dmm_measurement_range=dmm_range,
+            dmm_apply_configuration=dmm_apply_configuration,
         )
         self.capture_thread.capture_started.connect(self._on_capture_started)
         self.capture_thread.capture_completed.connect(self._on_capture_completed)
@@ -1026,6 +1224,39 @@ class MainWindow(QMainWindow):
     def _on_all_captures_completed(self):
         self.terminal_panel.add_log("success", "All captures completed!")
         self._update_capture_button()
+
+    def _load_ui_settings(self):
+        self._loading_settings = True
+        try:
+            scope_mode_raw = self.settings.value('ui/scope_mode', 0)
+            try:
+                scope_mode = int(scope_mode_raw)
+            except (TypeError, ValueError):
+                scope_mode = 0
+            self.control_panel.set_scope_mode(scope_mode)
+
+            timebase_text = str(self.settings.value('ui/timebase_text', '') or '')
+            self.control_panel.set_timebase_text(timebase_text)
+
+            mm_mode = str(self.settings.value('ui/mm_mode', 'auto') or 'auto')
+            self.control_panel.set_mm_mode(mm_mode)
+
+            mm_function = str(self.settings.value('ui/mm_function', 'V') or 'V')
+            self.control_panel.set_mm_function(mm_function)
+
+            mixed_dmm_function = str(self.settings.value('ui/mixed_dmm_function', 'CURR:DC') or 'CURR:DC')
+            self.control_panel.set_mixed_dmm_function(mixed_dmm_function)
+        finally:
+            self._loading_settings = False
+
+    def _save_ui_settings(self):
+        if self._loading_settings:
+            return
+        self.settings.setValue('ui/scope_mode', self.control_panel.get_mode())
+        self.settings.setValue('ui/timebase_text', self.control_panel.get_timebase_text())
+        self.settings.setValue('ui/mm_mode', self.control_panel.get_mm_mode())
+        self.settings.setValue('ui/mm_function', self.control_panel.get_mm_function())
+        self.settings.setValue('ui/mixed_dmm_function', self.control_panel.get_mixed_dmm_function())
 
 
 # Fallback dark stylesheet (loaded from style.qss if available)
