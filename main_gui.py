@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QCheckBox, QLineEdit, QScrollArea,
-    QFrame, QTextEdit, QComboBox
+    QFrame, QTextEdit
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QSettings
 
@@ -430,7 +430,7 @@ class ControlPanel(QFrame):
     def setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
+        layout.setSpacing(10)
 
         # Capture section
         capture_panel = QFrame()
@@ -439,27 +439,10 @@ class ControlPanel(QFrame):
         capture_layout.setContentsMargins(0, 0, 0, 0)
         capture_layout.setSpacing(0)
 
-        # Capture header
-        capture_header = QFrame()
-        capture_header.setObjectName("panelHeader")
-        header_layout = QHBoxLayout(capture_header)
-        header_layout.setContentsMargins(16, 12, 16, 12)
-
-        icon_label = QLabel("📷")
-        icon_label.setStyleSheet("font-size: 14px;")
-        header_layout.addWidget(icon_label)
-
-        title_label = QLabel("Capture All")
-        title_label.setObjectName("panelTitle")
-        header_layout.addWidget(title_label)
-        header_layout.addStretch()
-
-        capture_layout.addWidget(capture_header)
-
         # Capture button container
         btn_container = QWidget()
         btn_layout = QVBoxLayout(btn_container)
-        btn_layout.setContentsMargins(16, 16, 16, 16)
+        btn_layout.setContentsMargins(14, 12, 14, 12)
 
         self.capture_btn = QPushButton("⚡ Take a Shot")
         self.capture_btn.setObjectName("captureButton")
@@ -483,28 +466,11 @@ class ControlPanel(QFrame):
         settings_layout.setContentsMargins(0, 0, 0, 0)
         settings_layout.setSpacing(0)
 
-        # Settings header
-        settings_header = QFrame()
-        settings_header.setObjectName("panelHeader")
-        header_layout2 = QHBoxLayout(settings_header)
-        header_layout2.setContentsMargins(16, 12, 16, 12)
-
-        icon_label2 = QLabel("⚙")
-        icon_label2.setStyleSheet("font-size: 14px;")
-        header_layout2.addWidget(icon_label2)
-
-        title_label2 = QLabel("Instrument Settings")
-        title_label2.setObjectName("panelTitle")
-        header_layout2.addWidget(title_label2)
-        header_layout2.addStretch()
-
-        settings_layout.addWidget(settings_header)
-
         # Settings content
         settings_content = QWidget()
         content_layout = QVBoxLayout(settings_content)
-        content_layout.setContentsMargins(16, 16, 16, 16)
-        content_layout.setSpacing(16)
+        content_layout.setContentsMargins(14, 12, 14, 12)
+        content_layout.setSpacing(12)
 
         # Active instrument label
         self.instrument_label = QLabel("Active Instrument: Oscilloscope")
@@ -760,10 +726,15 @@ class ControlPanel(QFrame):
 
     def set_selected_instrument_type(self, instrument_type: str):
         """Switches settings panel content based on selected instrument type."""
-        resolved = instrument_type if instrument_type in ('oscilloscope', 'dmm6500', 'mixed') else 'oscilloscope'
+        resolved = instrument_type if instrument_type in ('oscilloscope', 'dmm6500', 'mixed', 'none') else 'oscilloscope'
         self.selected_instrument_type = resolved
 
-        if resolved == 'dmm6500':
+        if resolved == 'none':
+            self.instrument_label.setText("Active Panel: Layout (no active device)")
+            self.scope_settings_container.setVisible(True)
+            self.dmm_settings_container.setVisible(False)
+            self.mixed_dmm_settings_container.setVisible(False)
+        elif resolved == 'dmm6500':
             self.instrument_label.setText("Active Instrument: Keithley DMM6500")
             self.scope_settings_container.setVisible(False)
             self.dmm_settings_container.setVisible(True)
@@ -978,7 +949,7 @@ class TerminalPanel(QFrame):
         self.terminal = QTextEdit()
         self.terminal.setObjectName("terminal")
         self.terminal.setReadOnly(True)
-        self.terminal.setMinimumHeight(180)
+        self.terminal.setMinimumHeight(90)
         layout.addWidget(self.terminal)
 
         # Initial message
@@ -1032,53 +1003,15 @@ class MainWindow(QMainWindow):
     def setup_ui(self):
         self.setWindowTitle("VISA Instrument Capture Tool")
         self.setMinimumSize(500, 700)
-        self.resize(520, 750)
+        self.resize(520, 720)
 
         # Central widget
         central = QWidget()
         self.setCentralWidget(central)
 
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(24, 24, 24, 24)
-        main_layout.setSpacing(20)
-
-        # Header
-        header = QFrame()
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(0, 0, 0, 16)
-
-        icon_container = QFrame()
-        icon_container.setObjectName("headerIconContainer")
-        icon_container.setFixedSize(44, 44)
-        icon_layout = QVBoxLayout(icon_container)
-        icon_layout.setContentsMargins(0, 0, 0, 0)
-        icon_label = QLabel("📊")
-        icon_label.setStyleSheet("font-size: 20px;")
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_layout.addWidget(icon_label)
-        header_layout.addWidget(icon_container)
-
-        title_container = QVBoxLayout()
-        title_container.setSpacing(2)
-        
-        title = QLabel("VISA Instrument Capture Tool")
-        title.setObjectName("appTitle")
-        title_container.addWidget(title)
-        
-        subtitle = QLabel("Screenshots and measurements from multiple VISA instruments")
-        subtitle.setObjectName("appSubtitle")
-        title_container.addWidget(subtitle)
-        
-        header_layout.addLayout(title_container)
-        header_layout.addStretch()
-
-        main_layout.addWidget(header)
-
-        # Separator
-        separator = QFrame()
-        separator.setObjectName("separator")
-        separator.setFixedHeight(1)
-        main_layout.addWidget(separator)
+        main_layout.setContentsMargins(16, 10, 16, 14)
+        main_layout.setSpacing(10)
 
         # Device panel
         self.device_panel = DevicePanel()
@@ -1134,7 +1067,7 @@ class MainWindow(QMainWindow):
             enabled_devices = self.device_panel.get_enabled_devices()
 
         if not enabled_devices:
-            self.active_instrument_type = 'oscilloscope'
+            self.active_instrument_type = 'none'
             self._mixed_selection_logged = False
             self.control_panel.set_selected_instrument_type(self.active_instrument_type)
             return
