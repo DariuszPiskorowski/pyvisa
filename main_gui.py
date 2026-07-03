@@ -423,6 +423,7 @@ class ControlPanel(QFrame):
         self.selected_instrument_type = 'oscilloscope'
         self._dmm_mm_mode = 'auto'  # auto|custom
         self._dmm_mm_function = 'V'
+        self._dmm_mm_signal = 'DC'
         self._dmm_mixed_function = 'CURR:DC'
         self.setup_ui()
 
@@ -658,9 +659,42 @@ class ControlPanel(QFrame):
 
         dmm_layout.addLayout(mm_function_layout)
 
-        mm_function_hint = QLabel("V/A use DC mode in MM-only view.")
+        self.mm_signal_container = QWidget()
+        mm_signal_layout = QVBoxLayout(self.mm_signal_container)
+        mm_signal_layout.setContentsMargins(0, 0, 0, 0)
+        mm_signal_layout.setSpacing(8)
+
+        mm_signal_label = QLabel("Signal Type")
+        mm_signal_label.setObjectName("settingLabel")
+        mm_signal_layout.addWidget(mm_signal_label)
+
+        mm_signal_buttons_layout = QHBoxLayout()
+        mm_signal_buttons_layout.setSpacing(8)
+
+        self.mm_signal_dc_btn = QPushButton("DC")
+        self.mm_signal_dc_btn.setObjectName("modeButton")
+        self.mm_signal_dc_btn.setProperty("active", True)
+        self.mm_signal_dc_btn.setFixedHeight(36)
+        self.mm_signal_dc_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mm_signal_dc_btn.clicked.connect(lambda: self._on_mm_signal_changed('DC'))
+        mm_signal_buttons_layout.addWidget(self.mm_signal_dc_btn)
+
+        self.mm_signal_ac_btn = QPushButton("AC")
+        self.mm_signal_ac_btn.setObjectName("modeButton")
+        self.mm_signal_ac_btn.setProperty("active", False)
+        self.mm_signal_ac_btn.setFixedHeight(36)
+        self.mm_signal_ac_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mm_signal_ac_btn.clicked.connect(lambda: self._on_mm_signal_changed('AC'))
+        mm_signal_buttons_layout.addWidget(self.mm_signal_ac_btn)
+
+        mm_signal_layout.addLayout(mm_signal_buttons_layout)
+        dmm_layout.addWidget(self.mm_signal_container)
+
+        mm_function_hint = QLabel("Signal Type applies only to V/A.")
         mm_function_hint.setObjectName("settingHint")
         dmm_layout.addWidget(mm_function_hint)
+
+        self._update_mm_signal_visibility()
 
         # Mixed mode DMM settings container
         self.mixed_dmm_settings_container = QWidget()
@@ -791,14 +825,17 @@ class ControlPanel(QFrame):
         if self.selected_instrument_type == 'mixed':
             return self._dmm_mixed_function
 
-        mapping = {
-            'V': 'VOLT:DC',
-            'A': 'CURR:DC',
-            'FREQ': 'FREQ',
-            'PERIOD': 'PER',
-            'OHMS': 'RES',
-        }
-        return mapping.get(self._dmm_mm_function, 'VOLT:DC')
+        if self._dmm_mm_function == 'V':
+            return 'VOLT:AC' if self._dmm_mm_signal == 'AC' else 'VOLT:DC'
+        if self._dmm_mm_function == 'A':
+            return 'CURR:AC' if self._dmm_mm_signal == 'AC' else 'CURR:DC'
+        if self._dmm_mm_function == 'FREQ':
+            return 'FREQ'
+        if self._dmm_mm_function == 'PERIOD':
+            return 'PER'
+        if self._dmm_mm_function == 'OHMS':
+            return 'RES'
+        return 'VOLT:DC'
 
     def get_dmm_measurement_range(self) -> Optional[float]:
         return None
@@ -831,6 +868,15 @@ class ControlPanel(QFrame):
         for code, button in buttons.items():
             button.setProperty("active", code == function_code)
             self._refresh_button_style(button)
+        self._update_mm_signal_visibility()
+        self.settings_changed.emit()
+
+    def _on_mm_signal_changed(self, signal_code: str):
+        self._dmm_mm_signal = signal_code
+        self.mm_signal_dc_btn.setProperty("active", signal_code == 'DC')
+        self.mm_signal_ac_btn.setProperty("active", signal_code == 'AC')
+        self._refresh_button_style(self.mm_signal_dc_btn)
+        self._refresh_button_style(self.mm_signal_ac_btn)
         self.settings_changed.emit()
 
     def _on_mixed_dmm_function_changed(self, function_code: str):
@@ -859,6 +905,11 @@ class ControlPanel(QFrame):
             return
         self._on_mm_function_changed(function_code)
 
+    def set_mm_signal(self, signal_code: str):
+        if signal_code not in ('DC', 'AC'):
+            return
+        self._on_mm_signal_changed(signal_code)
+
     def set_mixed_dmm_function(self, function_code: str):
         if function_code not in ('CURR:AC', 'CURR:DC'):
             return
@@ -870,8 +921,15 @@ class ControlPanel(QFrame):
     def get_mm_function(self) -> str:
         return self._dmm_mm_function
 
+    def get_mm_signal(self) -> str:
+        return self._dmm_mm_signal
+
     def get_mixed_dmm_function(self) -> str:
         return self._dmm_mixed_function
+
+    def _update_mm_signal_visibility(self):
+        is_va_mode = self._dmm_mm_function in ('V', 'A')
+        self.mm_signal_container.setVisible(is_va_mode)
 
     @staticmethod
     def _refresh_button_style(button: QPushButton):
@@ -1244,6 +1302,9 @@ class MainWindow(QMainWindow):
             mm_function = str(self.settings.value('ui/mm_function', 'V') or 'V')
             self.control_panel.set_mm_function(mm_function)
 
+            mm_signal = str(self.settings.value('ui/mm_signal', 'DC') or 'DC')
+            self.control_panel.set_mm_signal(mm_signal)
+
             mixed_dmm_function = str(self.settings.value('ui/mixed_dmm_function', 'CURR:DC') or 'CURR:DC')
             self.control_panel.set_mixed_dmm_function(mixed_dmm_function)
         finally:
@@ -1256,6 +1317,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue('ui/timebase_text', self.control_panel.get_timebase_text())
         self.settings.setValue('ui/mm_mode', self.control_panel.get_mm_mode())
         self.settings.setValue('ui/mm_function', self.control_panel.get_mm_function())
+        self.settings.setValue('ui/mm_signal', self.control_panel.get_mm_signal())
         self.settings.setValue('ui/mixed_dmm_function', self.control_panel.get_mixed_dmm_function())
 
 
